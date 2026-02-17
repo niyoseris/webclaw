@@ -653,9 +653,9 @@ async fn execute_fetch_url(args: &serde_json::Value) -> Result<String, JsValue> 
     // Simple text extraction - remove HTML tags
     let text = remove_html_tags(&text);
     
-    // Limit to first 3000 characters
-    if text.len() > 3000 {
-        Ok(format!("{}...(truncated)", &text[..3000]))
+    // Limit to first 3000 characters (UTF-8 safe)
+    if text.chars().count() > 3000 {
+        Ok(format!("{}...(truncated)", text.chars().take(3000).collect::<String>()))
     } else {
         Ok(text)
     }
