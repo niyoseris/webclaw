@@ -63,6 +63,12 @@ async fn proxy_handler(
                     .unwrap_or(actix_web::http::StatusCode::OK)
             );
             
+            // Add CORS headers to every response
+            builder
+                .insert_header(("Access-Control-Allow-Origin", "*"))
+                .insert_header(("Access-Control-Allow-Methods", "POST, OPTIONS, GET"))
+                .insert_header(("Access-Control-Allow-Headers", "Content-Type, Authorization, *"));
+            
             // Forward response headers
             for (name, value) in headers {
                 if let Some(name) = name {
@@ -78,7 +84,9 @@ async fn proxy_handler(
             builder.body(body)
         }
         Err(e) => {
-            HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+            HttpResponse::InternalServerError()
+                .insert_header(("Access-Control-Allow-Origin", "*"))
+                .body(format!("Proxy error: {}", e))
         }
     }
 }
