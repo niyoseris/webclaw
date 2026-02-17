@@ -1,0 +1,53 @@
+[package]
+name = "webclaw"
+version = "0.1.0"
+edition = "2021"
+authors = ["WebClaw Team"]
+license = "MIT"
+description = "WebAssembly AI Assistant - ZeroClaw inspired browser-native AI"
+repository = "https://github.com/webclaw/webclaw"
+keywords = ["ai", "assistant", "wasm", "browser", "chatbot"]
+categories = ["wasm", "web-programming"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "proxy"
+path = "src/bin/proxy.rs"
+required-features = ["proxy"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Headers", "Request", "RequestInit", "RequestMode", "Response", "Storage", "Document", "Element", "HtmlElement", "Blob", "BlobPropertyBag", "Url", "Node"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde", "wasmbind"] }
+url = "2.5"
+urlencoding = "2.1"
+
+# Proxy server dependencies (native only)
+actix-web = { version = "4", optional = true }
+actix-cors = { version = "0.7", optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[features]
+proxy = ["actix-web", "actix-cors", "reqwest", "tokio"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package."*"]
+opt-level = "s"

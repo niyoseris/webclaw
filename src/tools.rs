@@ -1,0 +1,1408 @@
+//! Tools module for WebClaw - Skills and function calling
+
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::JsValue;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Headers, Request, RequestInit, RequestMode, Response, Blob, BlobPropertyBag};
+use wasm_bindgen::JsCast;
+use js_sys::Array;
+
+/// Tool definition for AI function calling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Tool execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub name: String,
+    pub result: String,
+    pub success: bool,
+}
+
+/// Get all available tool definitions
+pub fn get_tool_definitions() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            name: "web_search".to_string(),
+            description: "Search the web for current information. Returns search results with titles, URLs, and snippets.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "reddit_search".to_string(),
+            description: "Search Reddit for posts and discussions. Returns post titles, content, scores, and URLs.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query for Reddit posts"
+                    },
+                    "subreddit": {
+                        "type": "string",
+                        "description": "Optional subreddit to search in (without r/ prefix)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 10)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "image_search".to_string(),
+            description: "Search for images on the web. Returns image URLs, titles, and source pages. Use this to find images for PDFs or research.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query for images"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of images to return (default: 5)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_current_time".to_string(),
+            description: "Get the current date and time".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "calculate".to_string(),
+            description: "Perform a mathematical calculation. Supports basic arithmetic, powers, and common functions.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "Mathematical expression to evaluate (e.g., '2+2', 'sqrt(16)', 'sin(3.14)')"
+                    }
+                },
+                "required": ["expression"]
+            }),
+        },
+        ToolDefinition {
+            name: "fetch_url".to_string(),
+            description: "Fetch and extract text content from a URL".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch content from"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDefinition {
+            name: "save_note".to_string(),
+            description: "Save a note to browser local storage for later retrieval".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Note title"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Note content"
+                    }
+                },
+                "required": ["title", "content"]
+            }),
+        },
+        ToolDefinition {
+            name: "read_notes".to_string(),
+            description: "Read all saved notes from browser local storage".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "create_pdf".to_string(),
+            description: "Create a PDF document with text content and optional images. Returns a downloadable file ID. Images can be URLs or base64 data.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "PDF document title"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "PDF content (markdown format supported)"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename for the PDF (without .pdf extension)"
+                    },
+                    "images": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string", "description": "Image URL or base64 data URI"},
+                                "caption": {"type": "string", "description": "Optional image caption"},
+                                "width": {"type": "number", "description": "Image width in mm (default: 170)"},
+                                "height": {"type": "number", "description": "Image height in mm (auto if not set)"}
+                            }
+                        },
+                        "description": "Array of images to include in the PDF"
+                    }
+                },
+                "required": ["title", "content"]
+            }),
+        },
+        ToolDefinition {
+            name: "download_file".to_string(),
+            description: "Trigger download of a previously created file (like PDF). Returns download status.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "The file ID returned from create_pdf or similar"
+                    }
+                },
+                "required": ["file_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "send_message".to_string(),
+            description: "Send a message to a configured channel (Telegram, Discord, Slack, or WhatsApp). Use this to share information with users on their preferred platform.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "channel": {
+                        "type": "string",
+                        "enum": ["telegram", "discord", "slack", "whatsapp"],
+                        "description": "The channel to send the message to"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The message content to send"
+                    }
+                },
+                "required": ["channel", "message"]
+            }),
+        },
+        // Self-evolving tools
+        ToolDefinition {
+            name: "create_tool".to_string(),
+            description: "Create a new custom tool with JavaScript code. The tool will be saved and can be used immediately. Use this to extend your own capabilities!".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Tool name (lowercase, underscores allowed)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What this tool does"
+                    },
+                    "parameters_schema": {
+                        "type": "object",
+                        "description": "JSON schema for tool parameters"
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "JavaScript code. Use 'args' for parameters. Return a string result. Example: 'return args.query.toUpperCase();'"
+                    }
+                },
+                "required": ["name", "description", "parameters_schema", "code"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_custom_tools".to_string(),
+            description: "List all custom tools created by the AI".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "research".to_string(),
+            description: "Deep research on a topic. Searches web, fetches URLs, and synthesizes findings into a comprehensive report.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "The topic to research"
+                    },
+                    "depth": {
+                        "type": "string",
+                        "enum": ["quick", "normal", "deep"],
+                        "description": "Research depth (default: normal)"
+                    }
+                },
+                "required": ["topic"]
+            }),
+        },
+        ToolDefinition {
+            name: "delete_tool".to_string(),
+            description: "Delete a custom tool by name".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the tool to delete"
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+    ]
+}
+
+/// Get tools in OpenAI function format
+pub fn get_tools_openai_format() -> Vec<serde_json::Value> {
+    get_tool_definitions()
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters
+                }
+            })
+        })
+        .collect()
+}
+
+/// Execute a tool by name with given arguments
+pub async fn execute_tool(name: &str, args: &serde_json::Value) -> Result<String, JsValue> {
+    match name {
+        "web_search" => execute_web_search(args).await,
+        "reddit_search" => execute_reddit_search(args).await,
+        "image_search" => execute_image_search(args).await,
+        "get_current_time" => execute_get_time(args).await,
+        "calculate" => execute_calculate(args).await,
+        "fetch_url" => execute_fetch_url(args).await,
+        "save_note" => execute_save_note(args).await,
+        "read_notes" => execute_read_notes(args).await,
+        "create_pdf" => execute_create_pdf(args).await,
+        "download_file" => execute_download_file(args).await,
+        "send_message" => execute_send_message(args).await,
+        // Self-evolving tools
+        "create_tool" => execute_create_tool(args).await,
+        "list_custom_tools" => execute_list_custom_tools(args).await,
+        "research" => execute_research(args).await,
+        "delete_tool" => execute_delete_tool(args).await,
+        // Dynamic custom tool execution
+        other => execute_custom_tool(other, args).await,
+    }
+}
+
+/// Web search using Ollama Web Search API via local CORS proxy
+async fn execute_web_search(args: &serde_json::Value) -> Result<String, JsValue> {
+    let query = args["query"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'query' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    // Get API key from localStorage
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    let api_key = storage.get_item("webclaw_settings").ok().and_then(|s| {
+        s.and_then(|json| {
+            serde_json::from_str::<serde_json::Value>(&json).ok()
+                .and_then(|v| v.get("apiKey")?.as_str().map(|s| s.to_string()))
+        })
+    });
+    
+    let body = serde_json::json!({
+        "query": query,
+        "max_results": 5
+    });
+    
+    // Use local proxy server
+    let url = "http://localhost:3000/ollama-search";
+    
+    let headers = Headers::new()?;
+    headers.set("Content-Type", "application/json")?;
+    
+    if let Some(key) = &api_key {
+        headers.set("Authorization", &format!("Bearer {}", key))?;
+    }
+    
+    let request_init = RequestInit::new();
+    request_init.set_method("POST");
+    request_init.set_headers(headers.as_ref());
+    let body_json = JsValue::from_str(&serde_json::to_string(&body).unwrap());
+    request_init.set_body(&body_json);
+    
+    let request = Request::new_with_str_and_init(&url, &request_init)?;
+    
+    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: Response = response.dyn_into()?;
+    
+    if !response.ok() {
+        return Err(JsValue::from_str(&format!(
+            "Search failed: {}. Make sure proxy server is running (cargo run --bin proxy --features proxy)",
+            response.status()
+        )));
+    }
+    
+    let json = JsFuture::from(response.json()?).await?;
+    let search_result: OllamaSearchResponse = serde_wasm_bindgen::from_value(json)
+        .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+    
+    if search_result.results.is_empty() {
+        return Ok(format!("No results found for: {}", query));
+    }
+    
+    let results: Vec<String> = search_result.results.iter()
+        .map(|r| format!("**{}**\n{}\n{}", r.title, r.content, r.url))
+        .collect();
+    
+    Ok(format!("Search results for '{}':\n\n{}", query, results.join("\n\n")))
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaSearchResponse {
+    results: Vec<OllamaSearchResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaSearchResult {
+    title: String,
+    url: String,
+    content: String,
+}
+
+/// Image search using DuckDuckGo Images via proxy
+async fn execute_image_search(args: &serde_json::Value) -> Result<String, JsValue> {
+    let query = args["query"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'query' parameter"))?;
+    let limit = args["limit"].as_i64().unwrap_or(5) as usize;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    // Use DuckDuckGo Images API via proxy
+    let proxy_url = "http://localhost:3000/proxy";
+    let encoded_query = urlencoding::encode(query);
+    let search_url = format!("https://duckduckgo.com/i.js?q={}&o=json", encoded_query);
+    
+    let body = serde_json::json!({
+        "url": search_url,
+        "method": "GET",
+        "headers": {}
+    });
+    
+    let headers = Headers::new()?;
+    headers.set("Content-Type", "application/json")?;
+    
+    let request_init = RequestInit::new();
+    request_init.set_method("POST");
+    request_init.set_headers(headers.as_ref());
+    let body_json = JsValue::from_str(&serde_json::to_string(&body).unwrap());
+    request_init.set_body(&body_json);
+    request_init.set_mode(RequestMode::Cors);
+    
+    let request = Request::new_with_str_and_init(&proxy_url, &request_init)?;
+    
+    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: Response = response.dyn_into()?;
+    
+    if !response.ok() {
+        // Fallback: return placeholder images
+        return Ok(format!(
+            "Image search for '{}' (showing {} results):\n\nNote: DuckDuckGo images API requires proxy. Using fallback.\n\nTry these searches:\n- https://www.google.com/search?tbm=isch&q={}\n- https://www.bing.com/images/search?q={}",
+            query, limit, urlencoding::encode(query), urlencoding::encode(query)
+        ));
+    }
+    
+    let text = JsFuture::from(response.text()?).await?;
+    let text = text.as_string().unwrap_or_default();
+    
+    // Parse DuckDuckGo image results
+    let images: Vec<ImageResult> = parse_ddg_images(&text, limit);
+    
+    if images.is_empty() {
+        return Ok(format!("No images found for '{}'", query));
+    }
+    
+    let results: Vec<String> = images.iter()
+        .map(|img| format!("🖼️ **{}**\nURL: {}\nSource: {}", img.title, img.url, img.source))
+        .collect();
+    
+    Ok(format!("Image search results for '{}':\n\n{}", query, results.join("\n\n")))
+}
+
+#[derive(Debug, Clone)]
+struct ImageResult {
+    title: String,
+    url: String,
+    source: String,
+}
+
+/// Parse DuckDuckGo image search results
+fn parse_ddg_images(json: &str, limit: usize) -> Vec<ImageResult> {
+    // Try to parse as JSON
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json) {
+        if let Some(results) = parsed["results"].as_array() {
+            return results.iter()
+                .take(limit)
+                .filter_map(|r| {
+                    Some(ImageResult {
+                        title: r["title"].as_str().unwrap_or("Image").to_string(),
+                        url: r["image"].as_str().or_else(|| r["thumbnail"]).unwrap_or("").to_string(),
+                        source: r["url"].as_str().unwrap_or("").to_string(),
+                    })
+                })
+                .collect();
+        }
+    }
+    
+    // Fallback: extract URLs from text
+    let mut images = Vec::new();
+    let urls = extract_urls(json, limit);
+    
+    for url in urls {
+        if url.contains(".jpg") || url.contains(".png") || url.contains(".gif") || url.contains(".jpeg") || url.contains(".webp") {
+            images.push(ImageResult {
+                title: "Image".to_string(),
+                url: url.clone(),
+                source: url,
+            });
+        }
+    }
+    
+    images
+}
+
+/// Get current time
+async fn execute_get_time(_args: &serde_json::Value) -> Result<String, JsValue> {
+    let now = chrono::Local::now();
+    Ok(format!(
+        "Current date and time: {}",
+        now.format("%Y-%m-%d %H:%M:%S %Z")
+    ))
+}
+
+/// Calculate mathematical expression
+async fn execute_calculate(args: &serde_json::Value) -> Result<String, JsValue> {
+    let expression = args["expression"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'expression' parameter"))?;
+    
+    // Simple expression evaluator
+    let result = evaluate_math(expression)?;
+    Ok(format!("Result: {}", result))
+}
+
+/// Simple math expression evaluator
+fn evaluate_math(expr: &str) -> Result<f64, JsValue> {
+    let expr = expr.trim();
+    
+    // Handle basic operations
+    // This is a simplified evaluator - for production use a proper math parser
+    
+    // Try to parse as a simple number first
+    if let Ok(n) = expr.parse::<f64>() {
+        return Ok(n);
+    }
+    
+    // Handle basic arithmetic
+    let expr = expr.replace(" ", "");
+    
+    // Addition
+    if let Some(pos) = expr.find('+') {
+        if pos > 0 {
+            let left = evaluate_math(&expr[..pos])?;
+            let right = evaluate_math(&expr[pos+1..])?;
+            return Ok(left + right);
+        }
+    }
+    
+    // Subtraction (not at start)
+    if let Some(pos) = expr[1..].find('-') {
+        let pos = pos + 1;
+        let left = evaluate_math(&expr[..pos])?;
+        let right = evaluate_math(&expr[pos+1..])?;
+        return Ok(left - right);
+    }
+    
+    // Multiplication
+    if let Some(pos) = expr.find('*') {
+        let left = evaluate_math(&expr[..pos])?;
+        let right = evaluate_math(&expr[pos+1..])?;
+        return Ok(left * right);
+    }
+    
+    // Division
+    if let Some(pos) = expr.find('/') {
+        let left = evaluate_math(&expr[..pos])?;
+        let right = evaluate_math(&expr[pos+1..])?;
+        if right == 0.0 {
+            return Err(JsValue::from_str("Division by zero"));
+        }
+        return Ok(left / right);
+    }
+    
+    // Power
+    if let Some(pos) = expr.find('^') {
+        let left = evaluate_math(&expr[..pos])?;
+        let right = evaluate_math(&expr[pos+1..])?;
+        return Ok(left.powf(right));
+    }
+    
+    // Functions
+    if expr.starts_with("sqrt(") && expr.ends_with(')') {
+        let inner = &expr[5..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.sqrt());
+    }
+    
+    if expr.starts_with("sin(") && expr.ends_with(')') {
+        let inner = &expr[4..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.sin());
+    }
+    
+    if expr.starts_with("cos(") && expr.ends_with(')') {
+        let inner = &expr[4..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.cos());
+    }
+    
+    if expr.starts_with("tan(") && expr.ends_with(')') {
+        let inner = &expr[4..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.tan());
+    }
+    
+    if expr.starts_with("abs(") && expr.ends_with(')') {
+        let inner = &expr[4..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.abs());
+    }
+    
+    if expr.starts_with("log(") && expr.ends_with(')') {
+        let inner = &expr[4..expr.len()-1];
+        let val = evaluate_math(inner)?;
+        return Ok(val.ln());
+    }
+    
+    // Handle parentheses
+    if expr.starts_with('(') && expr.ends_with(')') {
+        return evaluate_math(&expr[1..expr.len()-1]);
+    }
+    
+    Err(JsValue::from_str(&format!("Cannot evaluate: {}", expr)))
+}
+
+/// Fetch URL content via proxy server (CORS bypass)
+async fn execute_fetch_url(args: &serde_json::Value) -> Result<String, JsValue> {
+    let url = args["url"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'url' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    // Use proxy server for CORS bypass
+    let proxy_url = format!(
+        "http://localhost:3000/proxy",
+    );
+    
+    let body = serde_json::json!({
+        "url": url,
+        "method": "GET"
+    });
+    
+    let headers = Headers::new()?;
+    headers.set("Content-Type", "application/json")?;
+    
+    let request_init = RequestInit::new();
+    request_init.set_method("POST");
+    request_init.set_headers(headers.as_ref());
+    let body_json = JsValue::from_str(&serde_json::to_string(&body).unwrap());
+    request_init.set_body(&body_json);
+    request_init.set_mode(RequestMode::Cors);
+    
+    let request = Request::new_with_str_and_init(&proxy_url, &request_init)?;
+    
+    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: Response = response.dyn_into()?;
+    
+    if !response.ok() {
+        return Err(JsValue::from_str(&format!(
+            "Fetch failed: {}. Make sure proxy server is running (cargo run --bin proxy --features proxy)",
+            response.status()
+        )));
+    }
+    
+    let text = JsFuture::from(response.text()?).await?;
+    let text = text.as_string().unwrap_or_default();
+    
+    // Simple text extraction - remove HTML tags
+    let text = remove_html_tags(&text);
+    
+    // Limit to first 3000 characters
+    if text.len() > 3000 {
+        Ok(format!("{}...(truncated)", &text[..3000]))
+    } else {
+        Ok(text)
+    }
+}
+
+/// Simple HTML tag removal
+fn remove_html_tags(html: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+            result.push(' ');
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+    
+    // Clean up whitespace
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Save note to localStorage
+async fn execute_save_note(args: &serde_json::Value) -> Result<String, JsValue> {
+    let title = args["title"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'title' parameter"))?;
+    let content = args["content"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'content' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    // Get existing notes
+    let notes_json = storage.get_item("webclaw_notes")?.unwrap_or_default();
+    let mut notes: Vec<Note> = if notes_json.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&notes_json).unwrap_or_default()
+    };
+    
+    // Add new note
+    notes.push(Note {
+        title: title.to_string(),
+        content: content.to_string(),
+        created_at: chrono::Local::now().to_rfc3339(),
+    });
+    
+    // Save
+    let notes_json = serde_json::to_string(&notes)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+    storage.set_item("webclaw_notes", &notes_json)?;
+    
+    Ok(format!("Note '{}' saved successfully", title))
+}
+
+/// Read notes from localStorage
+async fn execute_read_notes(_args: &serde_json::Value) -> Result<String, JsValue> {
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    let notes_json = storage.get_item("webclaw_notes")?.unwrap_or_default();
+    
+    if notes_json.is_empty() {
+        return Ok("No notes found".to_string());
+    }
+    
+    let notes: Vec<Note> = serde_json::from_str(&notes_json)
+        .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+    
+    if notes.is_empty() {
+        return Ok("No notes found".to_string());
+    }
+    
+    let result: Vec<String> = notes.iter().map(|n| {
+        format!("Title: {}\nContent: {}\nCreated: {}", n.title, n.content, n.created_at)
+    }).collect();
+    
+    Ok(result.join("\n\n---\n\n"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Note {
+    title: String,
+    content: String,
+    created_at: String,
+}
+
+/// Reddit search via proxy server
+async fn execute_reddit_search(args: &serde_json::Value) -> Result<String, JsValue> {
+    let query = args["query"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'query' parameter"))?;
+    let subreddit = args["subreddit"].as_str().unwrap_or("all");
+    let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    // Use proxy server for Reddit API
+    let url = format!(
+        "http://localhost:3000/reddit/search?q={}&subreddit={}&limit={}",
+        urlencoding::encode(query),
+        urlencoding::encode(subreddit),
+        limit
+    );
+    
+    let request_init = RequestInit::new();
+    request_init.set_method("GET");
+    request_init.set_mode(RequestMode::Cors);
+    
+    let request = Request::new_with_str_and_init(&url, &request_init)?;
+    
+    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: Response = response.dyn_into()?;
+    
+    if !response.ok() {
+        return Err(JsValue::from_str(&format!(
+            "Reddit search failed: {}. Make sure proxy server is running",
+            response.status()
+        )));
+    }
+    
+    let json = JsFuture::from(response.json()?).await?;
+    let search_result: RedditSearchResponse = serde_wasm_bindgen::from_value(json)
+        .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+    
+    if search_result.posts.is_empty() {
+        return Ok(format!("No Reddit posts found for: {}", query));
+    }
+    
+    let results: Vec<String> = search_result.posts.iter()
+        .map(|p| {
+            format!(
+                "**{}** (r/{})\n⬆️ {} | 💬 {} comments\n{}\n{}",
+                p.title, p.subreddit, p.score, p.num_comments,
+                if p.selftext.len() > 200 { format!("{}...", &p.selftext[..200]) } else { p.selftext.clone() },
+                p.url
+            )
+        })
+        .collect();
+    
+    Ok(format!("Reddit search results for '{}':\n\n{}", query, results.join("\n\n---\n\n")))
+}
+
+#[derive(Debug, Deserialize)]
+struct RedditSearchResponse {
+    posts: Vec<RedditPost>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RedditPost {
+    title: String,
+    subreddit: String,
+    selftext: String,
+    score: i32,
+    num_comments: i32,
+    url: String,
+}
+
+/// Create PDF document (browser-side using jsPDF via JavaScript)
+async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue> {
+    let title = args["title"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'title' parameter"))?;
+    let content = args["content"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'content' parameter"))?;
+    let filename = args["filename"].as_str()
+        .unwrap_or(title)
+        .replace(|c: char| !c.is_alphanumeric() && c != ' ' && c != '-', "_");
+    let images = args["images"].as_array();
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    // Generate unique file ID
+    let file_id = format!("pdf_{}", chrono::Utc::now().timestamp_millis());
+    
+    // Store PDF data in localStorage for later download
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    let pdf_data = PdfFile {
+        id: file_id.clone(),
+        title: title.to_string(),
+        content: content.to_string(),
+        filename: format!("{}.pdf", filename),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    
+    let pdf_json = serde_json::to_string(&pdf_data)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
+    storage.set_item(&file_id, &pdf_json)?;
+    
+    // Also store in file index
+    let mut file_index: Vec<String> = storage.get_item("webclaw_files")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    file_index.push(file_id.clone());
+    storage.set_item("webclaw_files", &serde_json::to_string(&file_index).unwrap())?;
+    
+    // Prepare images JSON for JavaScript
+    let images_json = images
+        .map(|imgs| serde_json::to_string(imgs).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|| "[]".to_string());
+    
+    // Use jsPDF to create real PDF with images
+    let js_code = format!(r#"
+        (async function() {{
+            const {{ jsPDF }} = window.jspdf;
+            const doc = new jsPDF();
+            
+            // Add title
+            doc.setFontSize(20);
+            doc.setTextColor(51, 51, 51);
+            doc.text({}, 20, 20);
+            
+            // Add content
+            doc.setFontSize(12);
+            doc.setTextColor(0, 0, 0);
+            const lines = doc.splitTextToSize({}, 170);
+            let y = 35;
+            for (const line of lines) {{
+                if (y > 280) {{
+                    doc.addPage();
+                    y = 20;
+                }}
+                doc.text(line, 20, y);
+                y += 7;
+            }}
+            
+            // Add images
+            const images = {};
+            for (const img of images) {{
+                try {{
+                    // Add new page for each image
+                    doc.addPage();
+                    y = 20;
+                    
+                    // Load image
+                    const imgData = img.url;
+                    const width = img.width || 170;
+                    const height = img.height || 0;
+                    
+                    // Add image to PDF
+                    if (imgData.startsWith('data:') || imgData.startsWith('http')) {{
+                        // For URLs, we need to load them first
+                        if (imgData.startsWith('http')) {{
+                            try {{
+                                const response = await fetch(imgData);
+                                const blob = await response.blob();
+                                const reader = new FileReader();
+                                const base64 = await new Promise((resolve, reject) => {{
+                                    reader.onload = () => resolve(reader.result);
+                                    reader.onerror = reject;
+                                    reader.readAsDataURL(blob);
+                                }});
+                                doc.addImage(base64, 'JPEG', 20, y, width, height || 'auto');
+                            }} catch (e) {{
+                                doc.text('[Image could not be loaded: ' + img.url + ']', 20, y);
+                            }}
+                        }} else {{
+                            doc.addImage(imgData, 'JPEG', 20, y, width, height || 'auto');
+                        }}
+                        
+                        // Add caption if provided
+                        if (img.caption) {{
+                            const capY = y + (height || 100) + 10;
+                            doc.setFontSize(10);
+                            doc.setTextColor(102, 102, 102);
+                            doc.text(img.caption, 20, capY > 280 ? 20 : capY);
+                        }}
+                    }}
+                }} catch (e) {{
+                    console.error('Image error:', e);
+                }}
+            }}
+            
+            // Add footer on last page
+            doc.setFontSize(10);
+            doc.setTextColor(102, 102, 102);
+            doc.text('Generated by WebClaw on {}', 20, 290);
+            
+            // Save
+            doc.save('{}.pdf');
+            return 'PDF created successfully with ' + images.length + ' images';
+        }})()
+    "#, 
+        serde_json::to_string(title).unwrap(),
+        serde_json::to_string(content).unwrap(),
+        images_json,
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        filename
+    );
+    
+    // Execute JavaScript
+    let result = js_sys::eval(&js_code)
+        .map_err(|e| JsValue::from_str(&format!("JavaScript error: {:?}", e)))?;
+    
+    let result_str = result.as_string().unwrap_or_else(|| "PDF created".to_string());
+    
+    Ok(format!(
+        "PDF '{}' created and downloaded!\nFile ID: {}\n\n{}",
+        title, file_id, result_str
+    ))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PdfFile {
+    id: String,
+    title: String,
+    content: String,
+    filename: String,
+    created_at: String,
+}
+
+/// Download a previously created file
+async fn execute_download_file(args: &serde_json::Value) -> Result<String, JsValue> {
+    let file_id = args["file_id"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'file_id' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let document = window.document().ok_or_else(|| JsValue::from_str("No document"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    // Get PDF data
+    let pdf_json = storage.get_item(file_id)?
+        .ok_or_else(|| JsValue::from_str(&format!("File not found: {}", file_id)))?;
+    
+    let pdf_data: PdfFile = serde_json::from_str(&pdf_json)
+        .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+    
+    // Get HTML content
+    let html_content = storage.get_item(&format!("{}_html", file_id))?
+        .unwrap_or_default();
+    
+    // Create blob and download link
+    let html_bytes = html_content.as_bytes();
+    let array = js_sys::Uint8Array::new_with_length(html_bytes.len() as u32);
+    array.copy_from(html_bytes);
+    
+    let blob_parts = js_sys::Array::new();
+    blob_parts.push(&array);
+    
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
+        &blob_parts,
+        web_sys::BlobPropertyBag::new().type_("text/html")
+    ).map_err(|e| JsValue::from_str(&format!("Blob error: {:?}", e)))?;
+    
+    // Create object URL
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|e| JsValue::from_str(&format!("URL error: {:?}", e)))?;
+    
+    // Create download link and click it
+    let link = document.create_element("a")?;
+    let link: web_sys::HtmlElement = link.dyn_into()
+        .map_err(|_| JsValue::from_str("Failed to create link"))?;
+    
+    link.set_attribute("href", &url)?;
+    link.set_attribute("download", &format!("{}.html", pdf_data.filename.replace(".pdf", "")))?;
+    link.set_attribute("style", "display: none")?;
+    
+    let body = document.body().ok_or_else(|| JsValue::from_str("No body"))?;
+    body.append_child(&link)?;
+    
+    // Click the link
+    link.click();
+    
+    // Clean up
+    body.remove_child(&link)?;
+    web_sys::Url::revoke_object_url(&url);
+    
+    Ok(format!(
+        "✅ Download started: {}\n\nNote: This is an HTML file that can be opened in browser and printed as PDF.\nTo save as PDF: Open the file → Print → Save as PDF",
+        pdf_data.filename
+    ))
+}
+
+/// Send message to configured channel (Telegram, Discord, Slack, WhatsApp)
+async fn execute_send_message(args: &serde_json::Value) -> Result<String, JsValue> {
+    let channel = args["channel"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'channel' parameter"))?;
+    let message = args["message"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'message' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    // Get channel settings from localStorage
+    let settings_json = storage.get_item("webclaw_settings")?
+        .ok_or_else(|| JsValue::from_str("No settings found. Please configure channels in Settings."))?;
+    
+    let settings: serde_json::Value = serde_json::from_str(&settings_json)
+        .map_err(|e| JsValue::from_str(&format!("Settings parse error: {}", e)))?;
+    
+    let url = "http://localhost:3000";
+    
+    match channel {
+        "telegram" => {
+            let bot_token = settings["telegramToken"].as_str()
+                .ok_or_else(|| JsValue::from_str("Telegram bot token not configured. Go to Settings to add it."))?;
+            let username = settings["telegramUsername"].as_str()
+                .ok_or_else(|| JsValue::from_str("Telegram username not configured. Go to Settings to add it."))?;
+            
+            let body = serde_json::json!({
+                "config": {
+                    "bot_token": bot_token,
+                    "username": username
+                },
+                "message": {
+                    "chat_id": "",  // Will be resolved from username
+                    "text": message
+                }
+            });
+            
+            send_channel_request(&format!("{}/channel/telegram/send", url), &body).await
+        }
+        "discord" => {
+            let bot_token = settings["discordToken"].as_str()
+                .ok_or_else(|| JsValue::from_str("Discord bot token not configured. Go to Settings to add it."))?;
+            let channel_id = settings["discordChannel"].as_str()
+                .ok_or_else(|| JsValue::from_str("Discord channel ID not configured. Go to Settings to add it."))?;
+            
+            let body = serde_json::json!({
+                "config": {
+                    "bot_token": bot_token,
+                    "channel_id": channel_id
+                },
+                "message": {
+                    "content": message
+                }
+            });
+            
+            send_channel_request(&format!("{}/channel/discord/send", url), &body).await
+        }
+        "slack" => {
+            let bot_token = settings["slackToken"].as_str()
+                .ok_or_else(|| JsValue::from_str("Slack bot token not configured. Go to Settings to add it."))?;
+            let channel_name = settings["slackChannel"].as_str()
+                .ok_or_else(|| JsValue::from_str("Slack channel not configured. Go to Settings to add it."))?;
+            
+            let body = serde_json::json!({
+                "config": {
+                    "bot_token": bot_token,
+                    "channel": channel_name
+                },
+                "message": {
+                    "channel": channel_name,
+                    "text": message
+                }
+            });
+            
+            send_channel_request(&format!("{}/channel/slack/send", url), &body).await
+        }
+        "whatsapp" => {
+            let access_token = settings["whatsappToken"].as_str()
+                .ok_or_else(|| JsValue::from_str("WhatsApp access token not configured. Go to Settings to add it."))?;
+            let phone_id = settings["whatsappPhoneId"].as_str()
+                .ok_or_else(|| JsValue::from_str("WhatsApp phone number ID not configured. Go to Settings to add it."))?;
+            
+            // WhatsApp needs a "to" number - we'll need to store that too or ask
+            return Err(JsValue::from_str("WhatsApp requires recipient phone number. Use the proxy endpoint directly with 'to' parameter."));
+        }
+        _ => Err(JsValue::from_str(&format!("Unknown channel: {}", channel)))
+    }
+}
+
+/// Helper function to send channel request
+async fn send_channel_request(url: &str, body: &serde_json::Value) -> Result<String, JsValue> {
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    
+    let headers = Headers::new()?;
+    headers.set("Content-Type", "application/json")?;
+    
+    let request_init = RequestInit::new();
+    request_init.set_method("POST");
+    request_init.set_headers(headers.as_ref());
+    let body_json = JsValue::from_str(&serde_json::to_string(body).unwrap());
+    request_init.set_body(&body_json);
+    
+    let request = Request::new_with_str_and_init(url, &request_init)?;
+    
+    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: Response = response.dyn_into()?;
+    
+    if !response.ok() {
+        return Err(JsValue::from_str(&format!(
+            "Channel send failed: {}. Make sure proxy server is running (cargo run --bin proxy --features proxy)",
+            response.status()
+        )));
+    }
+    
+    let text = JsFuture::from(response.text()?).await?;
+    let text = text.as_string().unwrap_or_default();
+    
+    Ok(format!("✅ Message sent successfully!\nResponse: {}", text))
+}
+
+// URL encoding module
+mod urlencoding {
+    pub fn encode(s: &str) -> String {
+        url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    }
+}
+
+// ==================== SELF-EVOLVING TOOLS ====================
+
+/// Custom tool stored in localStorage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CustomTool {
+    name: String,
+    description: String,
+    parameters_schema: serde_json::Value,
+    code: String,
+    created_at: String,
+}
+
+/// Create a new custom tool
+async fn execute_create_tool(args: &serde_json::Value) -> Result<String, JsValue> {
+    let name = args["name"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'name' parameter"))?;
+    let description = args["description"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'description' parameter"))?;
+    let parameters_schema = args["parameters_schema"].clone();
+    let code = args["code"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'code' parameter"))?;
+    
+    // Validate tool name (lowercase, underscores, no spaces)
+    if !name.chars().all(|c| c.is_lowercase() || c == '_' || c.is_numeric()) || name.contains(' ') {
+        return Err(JsValue::from_str("Tool name must be lowercase with underscores only"));
+    }
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    // Check if tool already exists
+    let tools_key = "webclaw_custom_tools";
+    let existing_tools: Vec<CustomTool> = storage.get_item(tools_key)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    
+    if existing_tools.iter().any(|t| t.name == name) {
+        return Err(JsValue::from_str(&format!("Tool '{}' already exists. Use delete_tool first if you want to replace it.", name)));
+    }
+    
+    // Create new tool
+    let new_tool = CustomTool {
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters_schema,
+        code: code.to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    
+    // Save to localStorage
+    let mut tools = existing_tools;
+    tools.push(new_tool);
+    storage.set_item(tools_key, &serde_json::to_string(&tools).unwrap())?;
+    
+    Ok(format!(
+        "✅ Tool '{}' created successfully!\n\nDescription: {}\n\nYou can now use this tool by calling it with the appropriate parameters.",
+        name, description
+    ))
+}
+
+/// List all custom tools
+async fn execute_list_custom_tools(_args: &serde_json::Value) -> Result<String, JsValue> {
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    let tools_key = "webclaw_custom_tools";
+    let tools: Vec<CustomTool> = storage.get_item(tools_key)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    
+    if tools.is_empty() {
+        return Ok("No custom tools created yet. Use create_tool to make one!".to_string());
+    }
+    
+    let mut result = format!("Custom Tools ({}):\n\n", tools.len());
+    for tool in tools {
+        result.push_str(&format!("🔧 {} - {}\n", tool.name, tool.description));
+        result.push_str(&format!("   Parameters: {}\n", serde_json::to_string(&tool.parameters_schema).unwrap_or_default()));
+        result.push_str(&format!("   Created: {}\n\n", tool.created_at));
+    }
+    
+    Ok(result)
+}
+
+/// Delete a custom tool
+async fn execute_delete_tool(args: &serde_json::Value) -> Result<String, JsValue> {
+    let name = args["name"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'name' parameter"))?;
+    
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    let tools_key = "webclaw_custom_tools";
+    let mut tools: Vec<CustomTool> = storage.get_item(tools_key)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    
+    let initial_len = tools.len();
+    tools.retain(|t| t.name != name);
+    
+    if tools.len() == initial_len {
+        return Err(JsValue::from_str(&format!("Tool '{}' not found", name)));
+    }
+    
+    storage.set_item(tools_key, &serde_json::to_string(&tools).unwrap())?;
+    
+    Ok(format!("✅ Tool '{}' deleted successfully!", name))
+}
+
+/// Execute a custom tool by running its JavaScript code
+async fn execute_custom_tool(name: &str, args: &serde_json::Value) -> Result<String, JsValue> {
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
+    
+    let tools_key = "webclaw_custom_tools";
+    let tools: Vec<CustomTool> = storage.get_item(tools_key)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    
+    let tool = tools.iter().find(|t| t.name == name)
+        .ok_or_else(|| JsValue::from_str(&format!("Unknown tool: {}", name)))?;
+    
+    // Build JavaScript code with args injected
+    let args_json = serde_json::to_string(args).unwrap_or_default();
+    let js_code = format!(
+        "(function() {{
+            const args = {};
+            {};
+        }})()",
+        args_json,
+        tool.code
+    );
+    
+    // Execute JavaScript
+    let result = js_sys::eval(&js_code)
+        .map_err(|e| JsValue::from_str(&format!("JavaScript error in tool '{}': {:?}", name, e)))?;
+    
+    let result_str = result.as_string().unwrap_or_else(|| format!("{:?}", result));
+    
+    Ok(result_str)
+}
+
+/// Deep research on a topic
+async fn execute_research(args: &serde_json::Value) -> Result<String, JsValue> {
+    let topic = args["topic"].as_str()
+        .ok_or_else(|| JsValue::from_str("Missing 'topic' parameter"))?;
+    let depth = args["depth"].as_str().unwrap_or("normal");
+    
+    let max_searches = match depth {
+        "quick" => 3,
+        "deep" => 10,
+        _ => 5,
+    };
+    
+    let mut findings = Vec::new();
+    
+    // Step 1: Web search
+    let search_args = serde_json::json!({"query": topic});
+    let search_result = execute_web_search(&search_args).await?;
+    findings.push(format!("## Web Search Results\n\n{}", search_result));
+    
+    // Step 2: Extract URLs and fetch content from top results
+    // Simple URL extraction without regex
+    let urls: Vec<String> = extract_urls(&search_result, max_searches);
+    
+    if !urls.is_empty() {
+        findings.push("\n## Content from Sources\n".to_string());
+        
+        for url in urls.iter().take(max_searches) {
+            let fetch_args = serde_json::json!({"url": url});
+            if let Ok(content) = execute_fetch_url(&fetch_args).await {
+                // Truncate to first 500 chars per source
+                let truncated = if content.len() > 500 {
+                    format!("{}...[truncated]", &content[..500])
+                } else {
+                    content
+                };
+                findings.push(format!("\n### {}\n{}\n", url, truncated));
+            }
+        }
+    }
+    
+    // Step 3: Reddit search for discussions
+    let reddit_args = serde_json::json!({"query": topic, "limit": 5});
+    if let Ok(reddit_result) = execute_reddit_search(&reddit_args).await {
+        findings.push(format!("\n## Reddit Discussions\n\n{}", reddit_result));
+    }
+    
+    Ok(format!(
+        "# Research Report: {}\n\nDepth: {}\n\n{}\n\n---\nResearch completed. Use this information to answer questions or create content about the topic.",
+        topic,
+        depth,
+        findings.join("\n")
+    ))
+}
+
+/// Simple URL extraction without regex
+fn extract_urls(text: &str, max: usize) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut start = 0;
+    
+    while urls.len() < max {
+        // Find https:// or http://
+        let http_pos = text[start..].find("https://")
+            .or_else(|| text[start..].find("http://"));
+        
+        if let Some(pos) = http_pos {
+            let abs_pos = start + pos;
+            let rest = &text[abs_pos..];
+            
+            // Find end of URL (space, newline, or closing paren)
+            let end_chars = [' ', '\n', '\r', ')', ']', '}'];
+            let end_pos = rest.find(|c| end_chars.contains(&c))
+                .unwrap_or(rest.len().min(200));
+            
+            let url = rest[..end_pos].to_string();
+            if url.len() > 10 {  // Minimum valid URL length
+                urls.push(url);
+            }
+            start = abs_pos + end_pos;
+        } else {
+            break;
+        }
+    }
+    
+    urls
+}
