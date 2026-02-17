@@ -378,7 +378,7 @@ struct OllamaSearchResult {
     content: String,
 }
 
-/// Image search using DuckDuckGo Images via proxy
+/// Image search using Wikipedia API via proxy
 async fn execute_image_search(args: &serde_json::Value) -> Result<String, JsValue> {
     let query = args["query"].as_str()
         .ok_or_else(|| JsValue::from_str("Missing 'query' parameter"))?;
@@ -386,10 +386,15 @@ async fn execute_image_search(args: &serde_json::Value) -> Result<String, JsValu
     
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
     
-    // Use DuckDuckGo Images API via proxy
+    // Use Wikipedia API for images
     let proxy_url = "http://localhost:3000/proxy";
     let encoded_query = urlencoding::encode(query);
-    let search_url = format!("https://duckduckgo.com/i.js?q={}&o=json", encoded_query);
+    
+    // Wikipedia API: search for images
+    let search_url = format!(
+        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&srnamespace=6&srlimit={}&format=json",
+        encoded_query, limit
+    );
     
     let body = serde_json::json!({
         "url": search_url,
@@ -412,22 +417,18 @@ async fn execute_image_search(args: &serde_json::Value) -> Result<String, JsValu
     let response = JsFuture::from(window.fetch_with_request(&request)).await?;
     let response: Response = response.dyn_into()?;
     
-    if !response.ok() {
-        // Fallback: return placeholder images
-        return Ok(format!(
-            "Image search for '{}' (showing {} results):\n\nNote: DuckDuckGo images API requires proxy. Using fallback.\n\nTry these searches:\n- https://www.google.com/search?tbm=isch&q={}\n- https://www.bing.com/images/search?q={}",
-            query, limit, urlencoding::encode(query), urlencoding::encode(query)
-        ));
-    }
-    
     let text = JsFuture::from(response.text()?).await?;
     let text = text.as_string().unwrap_or_default();
     
-    // Parse DuckDuckGo image results
-    let images: Vec<ImageResult> = parse_ddg_images(&text, limit);
+    // Parse Wikipedia search results and get image URLs
+    let images = parse_wikipedia_images(&text, limit);
     
     if images.is_empty() {
-        return Ok(format!("No images found for '{}'", query));
+        // Fallback: provide direct Wikipedia image search URL
+        return Ok(format!(
+            "No images found via API. Try these:\n\n🖼️ **Wikipedia Images:**\nhttps://commons.wikimedia.org/w/index.php?search={}&title=Special:MediaSearch\n\n🖼️ **Google Images:**\nhttps://www.google.com/search?tbm=isch&q={}\n\nYou can use these URLs in create_pdf with the images parameter.",
+            urlencoding::encode(query), urlencoding::encode(query)
+        ));
     }
     
     let results: Vec<String> = images.iter()
@@ -444,38 +445,38 @@ struct ImageResult {
     source: String,
 }
 
-/// Parse DuckDuckGo image search results
-fn parse_ddg_images(json: &str, limit: usize) -> Vec<ImageResult> {
-    // Try to parse as JSON
+/// Parse Wikipedia image search results
+fn parse_wikipedia_images(json: &str, limit: usize) -> Vec<ImageResult> {
+    let mut images = Vec::new();
+    
+    // Parse Wikipedia API response
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json) {
-        if let Some(results) = parsed["results"].as_array() {
-            return results.iter()
-                .take(limit)
-                .filter_map(|r| {
-                    let url = r["image"].as_str()
-                        .or_else(|| r["thumbnail"].as_str())
-                        .unwrap_or("");
+        if let Some(search_results) = parsed["query"]["search"].as_array() {
+            for result in search_results.iter().take(limit) {
+                if let Some(title) = result["title"].as_str() {
+                    // Wikipedia image URLs follow a pattern
+                    // File:Example.jpg -> https://upload.wikimedia.org/wikipedia/commons/thumb/...
+                    let image_url = format!(
+                        "https://commons.wikimedia.org/wiki/{}",
+                        urlencoding::encode(title)
+                    );
                     
-                    if url.is_empty() {
-                        return None;
-                    }
-                    
-                    Some(ImageResult {
-                        title: r["title"].as_str().unwrap_or("Image").to_string(),
-                        url: url.to_string(),
-                        source: r["url"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect();
+                    images.push(ImageResult {
+                        title: title.replace("File:", ""),
+                        url: image_url,
+                        source: "Wikipedia Commons".to_string(),
+                    });
+                }
+            }
         }
     }
     
-    // Fallback: extract URLs from text
-    let mut images = Vec::new();
+    // Also try to extract direct image URLs from text
     let urls = extract_urls(json, limit);
-    
     for url in urls {
-        if url.contains(".jpg") || url.contains(".png") || url.contains(".gif") || url.contains(".jpeg") || url.contains(".webp") {
+        if (url.contains(".jpg") || url.contains(".png") || url.contains(".gif") || 
+            url.contains(".jpeg") || url.contains(".webp") || url.contains("upload.wikimedia.org"))
+            && !images.iter().any(|i| i.url == url) {
             images.push(ImageResult {
                 title: "Image".to_string(),
                 url: url.clone(),
