@@ -173,20 +173,45 @@ impl ClaWasm {
             }
         }
         
-        // Look for JSON with "name" and "arguments" anywhere in response
-        if let Some(start) = response.find("{\"name\"") {
-            if let Some(end) = response[start..].rfind('}') {
-                let json_str = &response[start..end+1];
-                if let Ok(call) = serde_json::from_str::<ToolCall>(json_str) {
-                    return Some(call);
-                }
-            }
-        }
+        // Look for JSON with "name" and "arguments" or just "name" field
+        // Try to find complete JSON objects
+        let mut depth = 0;
+        let mut start_idx = None;
         
-        // Also try direct JSON
-        if response.trim().starts_with('{') {
-            if let Ok(call) = serde_json::from_str::<ToolCall>(response.trim()) {
-                return Some(call);
+        for (i, c) in response.char_indices() {
+            if c == '{' {
+                if depth == 0 {
+                    start_idx = Some(i);
+                }
+                depth += 1;
+            } else if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = start_idx {
+                        let json_str = &response[start..i+1];
+                        // Try to parse as ToolCall with arguments
+                        if let Ok(call) = serde_json::from_str::<ToolCall>(json_str) {
+                            return Some(call);
+                        }
+                        // Try to parse as simple {"name": "...", "query": "..."} format
+                        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
+                                // Build arguments from remaining fields
+                                let mut args = serde_json::Map::new();
+                                for (key, value) in obj.as_object().unwrap_or(&serde_json::Map::new()) {
+                                    if key != "name" {
+                                        args.insert(key.clone(), value.clone());
+                                    }
+                                }
+                                return Some(ToolCall {
+                                    name: name.to_string(),
+                                    arguments: serde_json::Value::Object(args),
+                                });
+                            }
+                        }
+                    }
+                    start_idx = None;
+                }
             }
         }
         
