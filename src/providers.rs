@@ -1,4 +1,4 @@
-//! AI Provider implementations for WebClaw
+//! AI Provider implementations for claWasm
 //! 
 //! Supports OpenAI, Anthropic, Ollama, and custom OpenAI-compatible endpoints
 

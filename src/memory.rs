@@ -1,4 +1,4 @@
-//! Memory System for WebClaw - Vector search + embedding
+//! Memory System for claWasm - Vector search + embedding
 //! 
 //! Inspired by ZeroClaw's memory system with hybrid search capabilities.
 

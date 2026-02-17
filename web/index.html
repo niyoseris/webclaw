@@ -459,7 +459,7 @@
             <div class="chat-messages" id="chatMessages">
                 <div class="message message-system">
                     <div class="message-content">
-                        Welcome to WebClaw! I'm a browser-native AI assistant. 
+                        Welcome to claWasm! I'm a browser-native AI assistant. 
                         Configure your API key in settings to get started.
                     </div>
                 </div>
@@ -547,21 +547,21 @@
 
     <script type="module">
         // Import the WASM module
-        import init, { WebClaw } from './pkg/clawasm.js';
+        import init, { ClaWasm } from './pkg/clawasm.js';
 
-        let webclaw = null;
+        let clawasm = null;
         let isLoading = false;
 
         // Initialize
         async function initApp() {
             try {
                 await init();
-                webclaw = new WebClaw();
+                clawasm = new ClaWasm();
                 console.log('claWasm initialized');
                 updateStatus('Ready', false);
                 loadSettings();
             } catch (error) {
-                console.error('Failed to initialize WebClaw:', error);
+                console.error('Failed to initialize claWasm:', error);
                 updateStatus('Error: ' + error.message, false);
             }
         }
@@ -633,7 +633,7 @@
             if (!message || isLoading) return;
             
             // Get settings for verbose mode
-            const settings = JSON.parse(localStorage.getItem('webclaw_settings') || '{}');
+            const settings = JSON.parse(localStorage.getItem('clawasm_settings') || '{}');
             const verbose = settings.verbose || false;
             
             input.value = '';
@@ -645,7 +645,7 @@
             addTypingIndicator();
             
             try {
-                const response = await webclaw.chatVerbose(message, verbose);
+                const response = await clawasm.chatVerbose(message, verbose);
                 removeTypingIndicator();
                 
                 // Try to parse as JSON (verbose mode)
@@ -690,7 +690,7 @@
 
         // Load settings from localStorage
         function loadSettings() {
-            const saved = localStorage.getItem('webclaw_settings');
+            const saved = localStorage.getItem('clawasm_settings');
             if (saved) {
                 const settings = JSON.parse(saved);
                 document.getElementById('providerSelect').value = settings.provider || 'openai';
@@ -719,12 +719,12 @@
                 verbose: document.getElementById('verboseInput').checked
             };
             
-            localStorage.setItem('webclaw_settings', JSON.stringify(settings));
+            localStorage.setItem('clawasm_settings', JSON.stringify(settings));
             
-            // Update WebClaw
-            if (webclaw) {
-                webclaw.setProvider(settings.provider, settings.apiKey || null);
-                webclaw.setModel(settings.model);
+            // Update claWasm
+            if (clawasm) {
+                clawasm.setProvider(settings.provider, settings.apiKey || null);
+                clawasm.setModel(settings.model);
             }
             
             closeModal();
@@ -796,8 +796,8 @@
                     </div>
                 </div>
             `;
-            if (webclaw) {
-                webclaw.clearHistory();
+            if (clawasm) {
+                clawasm.clearHistory();
             }
         });
 

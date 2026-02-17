@@ -195,7 +195,7 @@ async fn reddit_search_handler(
     };
     
     match client.get(&url)
-        .header("User-Agent", "WebClaw/0.1.0")
+        .header("User-Agent", "claWasm/0.1.0")
         .header("Accept", "application/json")
         .send()
         .await

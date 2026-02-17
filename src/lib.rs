@@ -29,15 +29,15 @@ struct ToolCall {
     arguments: serde_json::Value,
 }
 
-/// Initialize the WebClaw WASM module
+/// Initialize the claWasm WASM module
 #[wasm_bindgen]
 pub fn init() {
     console_error_panic_hook::set_once();
 }
 
-/// WebClaw - Main entry point for the AI assistant
+/// claWasm - Main entry point for the AI assistant
 #[wasm_bindgen]
-pub struct WebClaw {
+pub struct ClaWasm {
     chat: Chat,
     config: Config,
     provider: Provider,
@@ -46,17 +46,17 @@ pub struct WebClaw {
 }
 
 #[wasm_bindgen]
-impl WebClaw {
-    /// Create a new WebClaw instance
+impl ClaWasm {
+    /// Create a new claWasm instance
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WebClaw {
+    pub fn new() -> ClaWasm {
         init();
         let config = Config::default();
         let chat = Chat::with_system_prompt(&Self::build_system_prompt());
         let provider = Provider::from_name(&config.provider.active, config.provider.base_url.as_deref());
         let memory = MemorySystem::new(MemoryConfig::default());
         let security = SecurityManager::new(SecurityConfig::default());
-        WebClaw { chat, config, provider, memory, security }
+        ClaWasm { chat, config, provider, memory, security }
     }
 
     /// Build system prompt with tools info
@@ -79,7 +79,7 @@ impl WebClaw {
 
     /// Create with custom configuration
     #[wasm_bindgen(js_name = "withConfig")]
-    pub fn with_config(config_json: &str) -> Result<WebClaw, JsValue> {
+    pub fn with_config(config_json: &str) -> Result<ClaWasm, JsValue> {
         init();
         let config: Config = serde_json::from_str(config_json)
             .map_err(|e| JsValue::from_str(&format!("Config error: {}", e)))?;
@@ -87,7 +87,7 @@ impl WebClaw {
         let provider = Provider::from_name(&config.provider.active, config.provider.base_url.as_deref());
         let memory = MemorySystem::new(MemoryConfig::default());
         let security = SecurityManager::new(SecurityConfig::default());
-        Ok(WebClaw { chat, config, provider, memory, security })
+        Ok(ClaWasm { chat, config, provider, memory, security })
     }
 
     /// Send a message and get a response (returns Promise)
@@ -280,7 +280,7 @@ impl WebClaw {
     }
 }
 
-impl Default for WebClaw {
+impl Default for ClaWasm {
     fn default() -> Self {
         Self::new()
     }

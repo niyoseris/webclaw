@@ -1,4 +1,4 @@
-//! Configuration module for WebClaw
+//! Configuration module for claWasm
 
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +36,7 @@ impl Default for Config {
                 base_url: None,
                 model: "gpt-4o-mini".to_string(),
             },
-            system_prompt: "You are WebClaw, a helpful AI assistant running entirely in the browser. \
+            system_prompt: "You are claWasm, a helpful AI assistant running entirely in the browser. \
                 You are fast, private, and ready to help with any task."
                 .to_string(),
             max_tokens: 4096,

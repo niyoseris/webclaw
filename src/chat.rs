@@ -1,4 +1,4 @@
-//! Chat module for WebClaw - Message handling and conversation management
+//! Chat module for claWasm - Message handling and conversation management
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};

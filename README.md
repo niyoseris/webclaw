@@ -31,8 +31,8 @@ Inspired by [ZeroClaw](https://github.com/zero-claw) and [OpenClaw](https://gith
 ### One-Command Start
 
 ```bash
-git clone https://github.com/niyoseris/webclaw.git
-cd webclaw
+git clone https://github.com/niyoseris/claWasm.git
+cd claWasm
 ./start.sh
 ```
 
@@ -57,14 +57,14 @@ cargo install wasm-bindgen-cli
 
 ```bash
 # Clone
-git clone https://github.com/niyoseris/webclaw.git
-cd webclaw
+git clone https://github.com/niyoseris/claWasm.git
+cd claWasm
 
 # Build WASM
 cargo build --target wasm32-unknown-unknown --release
 
 # Generate JS bindings
-wasm-bindgen --out-dir web/pkg --target web target/wasm32-unknown-unknown/release/webclaw.wasm
+wasm-bindgen --out-dir web/pkg --target web target/wasm32-unknown-unknown/release/clawasm.wasm
 
 # Start proxy server (for CORS bypass)
 cargo run --bin proxy --features proxy &
@@ -145,7 +145,7 @@ Now the AI can use `word_counter` anytime!
 ## 🏗️ Architecture
 
 ```
-webclaw/
+claWasm/
 ├── src/
 │   ├── lib.rs        # WASM bindings, tool parsing
 │   ├── config.rs     # Configuration
@@ -175,10 +175,10 @@ Runs on http://localhost:3000
 ## 🔌 JavaScript API
 
 ```javascript
-import init, { WebClaw } from './pkg/webclaw.js';
+import init, { ClaWasm } from './pkg/clawasm.js';
 
 await init();
-const assistant = new WebClaw();
+const assistant = new ClaWasm();
 
 // Configure
 assistant.setProvider('ollama_cloud', 'your-api-key');
@@ -188,8 +188,8 @@ assistant.setModel('glm-5:cloud');
 const response = await assistant.chat('Research AI trends and create a PDF');
 
 // Tools
-const tools = WebClaw.getTools();
-const result = await WebClaw.executeTool('calculate', '{"expression": "2+2"}');
+const tools = ClaWasm.getTools();
+const result = await ClaWasm.executeTool('calculate', '{"expression": "2+2"}');
 
 // History
 const history = JSON.parse(assistant.getHistory());
@@ -198,7 +198,7 @@ assistant.clearHistory();
 
 ## 🆚 vs ZeroClaw
 
-| Feature | WebClaw | ZeroClaw |
+| Feature | claWasm | ZeroClaw |
 |---------|---------|----------|
 | Runtime | WASM (browser) | Native binary |
 | Size | ~200KB | ~3.4MB |
