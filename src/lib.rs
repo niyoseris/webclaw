@@ -190,7 +190,7 @@ impl ClaWasm {
                     };
                     
                     // Handle long tool results by splitting into batches
-                    let batch_size = 2000; // chars per batch
+                    let batch_size = 800; // chars per batch (reduced to prevent large payloads)
                     let result_len = tool_result.chars().count();
                     
                     if result_len > batch_size {
@@ -231,21 +231,42 @@ impl ClaWasm {
                 // Add all tool results as one message
                 current_messages.push(Message::user(&tool_results.join("\n\n---\n\n")));
                 
-                // Trim context if too many messages (keep last 10 exchanges = 20 messages)
-                if current_messages.len() > 20 {
-                    // Keep system message and last 10 exchanges
+                // Trim context if too many messages OR too large
+                let total_size: usize = current_messages.iter()
+                    .map(|m| m.content.chars().count())
+                    .sum();
+                
+                if current_messages.len() > 20 || total_size > 100000 {
+                    // Keep system message and trim to fit size limit
                     let system_msgs: Vec<Message> = current_messages.iter()
                         .filter(|m| matches!(m.role, Role::System))
                         .cloned()
                         .collect();
-                    let recent_msgs: Vec<Message> = current_messages.iter()
-                        .rev()
-                        .take(20)
-                        .rev()
-                        .cloned()
-                        .collect();
+                    
+                    // Build trimmed list from most recent, respecting size limit
+                    let mut recent_msgs: Vec<Message> = Vec::new();
+                    let mut current_size = 0;
+                    let max_size = 80000; // 80KB limit for messages
+                    
+                    for msg in current_messages.iter().rev() {
+                        if matches!(msg.role, Role::System) {
+                            continue;
+                        }
+                        let msg_size = msg.content.chars().count();
+                        if current_size + msg_size > max_size {
+                            break;
+                        }
+                        current_size += msg_size;
+                        recent_msgs.push(msg.clone());
+                    }
+                    recent_msgs.reverse();
+                    
                     current_messages = [system_msgs, recent_msgs].concat();
-                    web_sys::console::log_1(&JsValue::from_str("Context trimmed to prevent overflow"));
+                    web_sys::console::log_1(&JsValue::from_str(&format!(
+                        "Context trimmed: {} messages, {} chars",
+                        current_messages.len(),
+                        current_messages.iter().map(|m| m.content.chars().count()).sum::<usize>()
+                    )));
                 }
                 
                 // Get AI's response to tool results
