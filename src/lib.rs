@@ -187,7 +187,15 @@ impl ClaWasm {
                         Err(e) => format!("Error: {:?}", e),
                     };
                     
-                    tool_results.push(format!("Tool '{}' returned:\n{}", tool_call.name, tool_result));
+                    // Truncate long tool results to prevent context overflow
+                    let truncated_result = if tool_result.len() > 2000 {
+                        format!("{}...\n[Result truncated, {} chars total]", 
+                            &tool_result[..2000], tool_result.len())
+                    } else {
+                        tool_result
+                    };
+                    
+                    tool_results.push(format!("Tool '{}' returned:\n{}", tool_call.name, truncated_result));
                 }
                 
                 // Add assistant's response to messages
@@ -195,6 +203,23 @@ impl ClaWasm {
                 
                 // Add all tool results as one message
                 current_messages.push(Message::user(&tool_results.join("\n\n---\n\n")));
+                
+                // Trim context if too many messages (keep last 10 exchanges = 20 messages)
+                if current_messages.len() > 20 {
+                    // Keep system message and last 10 exchanges
+                    let system_msgs: Vec<Message> = current_messages.iter()
+                        .filter(|m| matches!(m.role, Role::System))
+                        .cloned()
+                        .collect();
+                    let recent_msgs: Vec<Message> = current_messages.iter()
+                        .rev()
+                        .take(20)
+                        .rev()
+                        .cloned()
+                        .collect();
+                    current_messages = [system_msgs, recent_msgs].concat();
+                    web_sys::console::log_1(&JsValue::from_str("Context trimmed to prevent overflow"));
+                }
                 
                 // Get AI's response to tool results
                 response = provider.chat(&current_messages, &config).await?;
@@ -221,6 +246,21 @@ impl ClaWasm {
     /// Parse ALL tool calls from response
     fn parse_all_tool_calls(response: &str) -> Vec<ToolCall> {
         let mut calls = Vec::new();
+        
+        // Check for incomplete JSON (response ends with incomplete JSON)
+        let open_braces = response.matches('{').count();
+        let close_braces = response.matches('}').count();
+        let open_brackets = response.matches('[').count();
+        let close_brackets = response.matches(']').count();
+        
+        if open_braces > close_braces || open_brackets > close_brackets {
+            // Incomplete JSON detected - try to find complete JSONs only
+            // This means the response was truncated
+            web_sys::console::log_1(&JsValue::from_str(&format!(
+                "Warning: Incomplete JSON detected ({{:{}/}}:{}, [:{}/]:{})", 
+                open_braces, close_braces, open_brackets, close_brackets
+            )));
+        }
         
         // Find all ```tool ... ``` blocks
         let mut search_start = 0;
