@@ -866,109 +866,147 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
         (async function() {{
             const {{ jsPDF }} = window.jspdf;
             const doc = new jsPDF({{
-                putOnlyUsedFonts: true
+                putOnlyUsedFonts: true,
+                compress: true
             }});
             
             // Add title with better formatting
-            doc.setFontSize(24);
-            doc.setTextColor(30, 30, 30);
+            doc.setFontSize(22);
+            doc.setTextColor(20, 20, 20);
+            doc.setFont('helvetica', 'bold');
             const titleLines = doc.splitTextToSize({}, 170);
             let y = 25;
             for (const line of titleLines) {{
                 doc.text(line, 20, y);
-                y += 10;
+                y += 9;
             }}
             
             // Add separator line
-            y += 5;
-            doc.setDrawColor(200, 200, 200);
+            y += 3;
+            doc.setDrawColor(180, 180, 180);
+            doc.setLineWidth(0.5);
             doc.line(20, y, 190, y);
-            y += 15;
+            y += 12;
             
             // Add content with better formatting
-            doc.setFontSize(11);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
             doc.setTextColor(40, 40, 40);
             
             // Split content into paragraphs
-            const paragraphs = {}.split('\\n\\n');
+            const paragraphs = {}.split('\\n');
             for (const para of paragraphs) {{
+                if (para.trim() === '') {{
+                    y += 3;
+                    continue;
+                }}
+                // Check for headers (lines starting with #)
+                if (para.startsWith('## ')) {{
+                    if (y > 250) {{ doc.addPage(); y = 25; }}
+                    y += 5;
+                    doc.setFontSize(14);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(30, 30, 30);
+                    doc.text(para.replace('## ', ''), 20, y);
+                    y += 8;
+                    doc.setFontSize(10);
+                    doc.setFont('helvetica', 'normal');
+                    doc.setTextColor(40, 40, 40);
+                    continue;
+                }}
+                if (para.startsWith('# ')) {{
+                    continue; // Skip main title, already added
+                }}
+                
                 const lines = doc.splitTextToSize(para, 170);
                 for (const line of lines) {{
-                    if (y > 270) {{
+                    if (y > 275) {{
                         doc.addPage();
                         y = 25;
                     }}
                     doc.text(line, 20, y);
-                    y += 6;
+                    y += 5;
                 }}
-                y += 4; // Paragraph spacing
+                y += 2;
             }}
             
             // Add images via proxy to avoid CORS
             const images = {};
+            let imageCount = 0;
             for (const img of images) {{
                 try {{
+                    const imgUrl = img.url;
+                    if (!imgUrl) continue;
+                    
+                    imageCount++;
                     doc.addPage();
                     y = 25;
                     
-                    let imgUrl = img.url;
-                    
-                    // If it's a Wikipedia URL, try to get direct image
-                    if (imgUrl.includes('wikipedia.org') || imgUrl.includes('wikimedia.org')) {{
-                        // Use proxy for Wikipedia images
-                        imgUrl = 'http://localhost:3000/proxy';
-                    }}
-                    
-                    const width = img.width || 170;
-                    const height = img.height || 120;
-                    
-                    if (imgUrl.startsWith('http')) {{
-                        try {{
-                            // Fetch via proxy
-                            const proxyBody = JSON.stringify({{
-                                url: img.url,
-                                method: 'GET',
-                                headers: {{}}
-                            }});
-                            
-                            const response = await fetch('http://localhost:3000/proxy', {{
-                                method: 'POST',
-                                headers: {{ 'Content-Type': 'application/json' }},
-                                body: proxyBody
-                            }});
-                            
-                            if (response.ok) {{
-                                const blob = await response.blob();
-                                const reader = new FileReader();
-                                const base64 = await new Promise((resolve, reject) => {{
-                                    reader.onload = () => resolve(reader.result);
-                                    reader.onerror = reject;
-                                    reader.readAsDataURL(blob);
-                                }});
-                                doc.addImage(base64, 'JPEG', 20, y, width, height);
-                            }} else {{
-                                doc.setFontSize(10);
-                                doc.setTextColor(150, 150, 150);
-                                doc.text('[Image unavailable: ' + img.url.substring(0, 50) + '...]', 20, y);
-                            }}
-                        }} catch (e) {{
-                            doc.setFontSize(10);
-                            doc.setTextColor(150, 150, 150);
-                            doc.text('[Could not load image]', 20, y);
-                        }}
-                    }} else if (imgUrl.startsWith('data:')) {{
-                        doc.addImage(imgUrl, 'JPEG', 20, y, width, height);
-                    }}
-                    
-                    // Add caption
+                    // Add image title/caption
                     if (img.caption) {{
-                        const capY = y + height + 10;
+                        doc.setFontSize(11);
+                        doc.setFont('helvetica', 'italic');
+                        doc.setTextColor(80, 80, 80);
+                        doc.text(img.caption, 20, y);
+                        y += 10;
+                    }}
+                    
+                    // Fetch image via proxy
+                    const proxyBody = JSON.stringify({{
+                        url: imgUrl,
+                        method: 'GET',
+                        headers: {{}}
+                    }});
+                    
+                    const response = await fetch('http://localhost:3000/proxy', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: proxyBody
+                    }});
+                    
+                    if (response.ok) {{
+                        const blob = await response.blob();
+                        const reader = new FileReader();
+                        const base64 = await new Promise((resolve, reject) => {{
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        }});
+                        
+                        // Calculate dimensions to fit page
+                        const pageWidth = 170;
+                        const pageHeight = 200;
+                        let width = img.width || pageWidth;
+                        let height = img.height || 0;
+                        
+                        // If no height, calculate from aspect ratio
+                        if (!height || height === 'auto') {{
+                            height = pageHeight * 0.6;
+                        }}
+                        
+                        // Scale down if too large
+                        if (width > pageWidth) {{
+                            const scale = pageWidth / width;
+                            width = pageWidth;
+                            height = height * scale;
+                        }}
+                        if (height > pageHeight) {{
+                            const scale = pageHeight / height;
+                            height = pageHeight;
+                            width = width * scale;
+                        }}
+                        
+                        doc.addImage(base64, 'JPEG', 20, y, width, height);
+                    }} else {{
                         doc.setFontSize(9);
-                        doc.setTextColor(100, 100, 100);
-                        doc.text(img.caption, 20, capY);
+                        doc.setTextColor(150, 150, 150);
+                        doc.text('[Görsel yüklenemedi]', 20, y);
                     }}
                 }} catch (e) {{
                     console.error('Image error:', e);
+                    doc.setFontSize(9);
+                    doc.setTextColor(150, 150, 150);
+                    doc.text('[Görsel hatası: ' + e.message + ']', 20, y);
                 }}
             }}
             
@@ -978,12 +1016,12 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
                 doc.setPage(i);
                 doc.setFontSize(8);
                 doc.setTextColor(150, 150, 150);
-                doc.text('Generated by claWasm | Page ' + i + '/' + pageCount, 20, 285);
+                doc.text('claWasm tarafından oluşturuldu | Sayfa ' + i + '/' + pageCount, 105, 287, {{ align: 'center' }});
             }}
             
             // Save
             doc.save('{}.pdf');
-            return 'PDF created with ' + pageCount + ' pages';
+            return 'PDF oluşturuldu: ' + pageCount + ' sayfa, ' + imageCount + ' görsel';
         }})()
     "#, 
         serde_json::to_string(title).unwrap(),

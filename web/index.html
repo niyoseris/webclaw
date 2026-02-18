@@ -706,6 +706,12 @@
                 if (settings.provider === 'custom') {
                     document.getElementById('baseUrlGroup').style.display = 'block';
                 }
+                
+                // Apply settings to WASM module automatically
+                if (clawasm && settings.apiKey) {
+                    clawasm.setProvider(settings.provider, settings.apiKey);
+                    clawasm.setModel(settings.model);
+                }
             }
         }
 
