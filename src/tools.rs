@@ -472,42 +472,20 @@ pub async fn execute_tool(name: &str, args: &serde_json::Value) -> Result<String
     }
 }
 
-/// Web search using Ollama Web Search API via local CORS proxy
+/// Web search using DuckDuckGo via local CORS proxy
 async fn execute_web_search(args: &serde_json::Value) -> Result<String, JsValue> {
     let query = args["query"].as_str()
         .ok_or_else(|| JsValue::from_str("Missing 'query' parameter"))?;
     
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
     
-    // Get API key from localStorage
-    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
-    let api_key = storage.get_item("clawasm_settings").ok().and_then(|s| {
-        s.and_then(|json| {
-            serde_json::from_str::<serde_json::Value>(&json).ok()
-                .and_then(|v| v.get("apiKey")?.as_str().map(|s| s.to_string()))
-        })
-    });
-    
-    let body = serde_json::json!({
-        "query": query,
-        "max_results": 5
-    });
-    
-    // Use local proxy server
-    let url = "http://localhost:3000/ollama-search";
-    
-    let headers = Headers::new()?;
-    headers.set("Content-Type", "application/json")?;
-    
-    if let Some(key) = &api_key {
-        headers.set("Authorization", &format!("Bearer {}", key))?;
-    }
+    // Use DuckDuckGo via proxy /search endpoint (no API key needed)
+    let encoded_query = urlencoding::encode(query);
+    let url = format!("http://localhost:3000/search?q={}", encoded_query);
     
     let request_init = RequestInit::new();
-    request_init.set_method("POST");
-    request_init.set_headers(headers.as_ref());
-    let body_json = JsValue::from_str(&serde_json::to_string(&body).unwrap());
-    request_init.set_body(&body_json);
+    request_init.set_method("GET");
+    request_init.set_mode(RequestMode::Cors);
     
     let request = Request::new_with_str_and_init(&url, &request_init)?;
     
@@ -516,36 +494,45 @@ async fn execute_web_search(args: &serde_json::Value) -> Result<String, JsValue>
     
     if !response.ok() {
         return Err(JsValue::from_str(&format!(
-            "Search failed: {}. Make sure proxy server is running (cargo run --bin proxy --features proxy)",
+            "Search failed: {}. Make sure proxy server is running (./start.sh)",
             response.status()
         )));
     }
     
     let json = JsFuture::from(response.json()?).await?;
-    let search_result: OllamaSearchResponse = serde_wasm_bindgen::from_value(json)
+    let ddg: serde_json::Value = serde_wasm_bindgen::from_value(json)
         .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
     
-    if search_result.results.is_empty() {
+    let mut results: Vec<String> = Vec::new();
+    
+    // DuckDuckGo Abstract (top result)
+    if let Some(abstract_text) = ddg["Abstract"].as_str() {
+        if !abstract_text.is_empty() {
+            let source = ddg["AbstractSource"].as_str().unwrap_or("");
+            let url = ddg["AbstractURL"].as_str().unwrap_or("");
+            results.push(format!("**{}**\n{}\n{}", source, abstract_text, url));
+        }
+    }
+    
+    // Related topics
+    if let Some(topics) = ddg["RelatedTopics"].as_array() {
+        for topic in topics.iter().take(8) {
+            if let (Some(text), Some(url)) = (
+                topic["Text"].as_str(),
+                topic["FirstURL"].as_str()
+            ) {
+                if !text.is_empty() {
+                    results.push(format!("• {}\n  {}", text, url));
+                }
+            }
+        }
+    }
+    
+    if results.is_empty() {
         return Ok(format!("No results found for: {}", query));
     }
     
-    let results: Vec<String> = search_result.results.iter()
-        .map(|r| format!("**{}**\n{}\n{}", r.title, r.content, r.url))
-        .collect();
-    
     Ok(format!("Search results for '{}':\n\n{}", query, results.join("\n\n")))
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaSearchResponse {
-    results: Vec<OllamaSearchResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaSearchResult {
-    title: String,
-    url: String,
-    content: String,
 }
 
 /// Image search using Wikipedia API via proxy
