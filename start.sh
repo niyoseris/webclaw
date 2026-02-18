@@ -43,6 +43,13 @@ echo ""
 echo "✅ Build complete!"
 echo ""
 
+# Kill any existing proxy on port 3000
+if lsof -ti :3000 &>/dev/null; then
+    echo "🔄 Stopping existing proxy on port 3000..."
+    kill $(lsof -ti :3000) 2>/dev/null
+    sleep 1
+fi
+
 # Start proxy in background
 if [ -f "./target/release/proxy" ]; then
     echo "🔄 Starting proxy server on http://localhost:3000..."
