@@ -962,7 +962,12 @@ async fn execute_reddit_search(args: &serde_json::Value) -> Result<String, JsVal
             format!(
                 "**{}** (r/{})\n⬆️ {} | 💬 {} comments\n{}\n{}",
                 p.title, p.subreddit, p.score, p.num_comments,
-                if p.selftext.len() > 200 { format!("{}...", &p.selftext[..200]) } else { p.selftext.clone() },
+                if p.selftext.len() > 200 { 
+                    let truncated: String = p.selftext.chars().take(200).collect();
+                    format!("{}...", truncated)
+                } else { 
+                    p.selftext.clone() 
+                },
                 p.url
             )
         })
