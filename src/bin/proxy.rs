@@ -39,7 +39,8 @@ async fn proxy_handler(
     };
     let req = proxy_req;
     
-    eprintln!("→ Proxy: {} {}", req.method, req.url);
+    let body_size = req.body.as_ref().map(|b| b.len()).unwrap_or(0);
+    eprintln!("→ Proxy: {} {} (body: {} bytes)", req.method, req.url, body_size);
     
     let client = Client::builder()
         .use_native_tls()
