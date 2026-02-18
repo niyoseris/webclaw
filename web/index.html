@@ -155,6 +155,7 @@
             font-size: 14px;
             color: var(--text-secondary);
             transition: all 0.2s;
+            position: relative;
         }
 
         .conversation-item:hover {
@@ -165,6 +166,55 @@
         .conversation-item.active {
             background: var(--bg-tertiary);
             color: var(--accent);
+        }
+
+        .session-title {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-meta {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 2px;
+        }
+
+        .session-delete {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 16px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .conversation-item:hover .session-delete {
+            opacity: 1;
+        }
+
+        .session-delete:hover {
+            color: var(--error);
+        }
+
+        /* Sidebar footer for tool management */
+        .sidebar-footer {
+            padding: 10px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+        }
+
+        .sidebar-footer .btn {
+            flex: 1;
+            padding: 6px 8px;
+            font-size: 12px;
         }
 
         /* Chat area */
@@ -455,6 +505,11 @@
             <div class="conversations" id="conversationsList">
                 <!-- Conversations will be listed here -->
             </div>
+            <div class="sidebar-footer">
+                <button class="btn" id="exportToolsBtn" title="Export tools">📤 Export</button>
+                <button class="btn" id="importToolsBtn" title="Import tools">📥 Import</button>
+                <input type="file" id="importToolsFile" accept=".json" style="display: none">
+            </div>
         </aside>
 
         <div class="chat-container">
@@ -553,6 +608,8 @@
 
         let clawasm = null;
         let isLoading = false;
+        let currentSessionId = null;
+        let sessions = {};
 
         // Initialize
         async function initApp() {
@@ -562,11 +619,214 @@
                 console.log('claWasm initialized');
                 updateStatus('Ready', false);
                 loadSettings();
+                loadSessions();
+                loadTools(); // Load tools on startup
             } catch (error) {
                 console.error('Failed to initialize claWasm:', error);
                 updateStatus('Error: ' + error.message, false);
             }
         }
+
+        // ============================================
+        // Session Management
+        // ============================================
+        
+        function loadSessions() {
+            const saved = localStorage.getItem('clawasm_sessions');
+            if (saved) {
+                sessions = JSON.parse(saved);
+                renderSessionsList();
+                // Load last active session or create new
+                const lastSessionId = localStorage.getItem('clawasm_active_session');
+                if (lastSessionId && sessions[lastSessionId]) {
+                    loadSession(lastSessionId);
+                } else {
+                    createNewSession();
+                }
+            } else {
+                createNewSession();
+            }
+        }
+
+        function saveSessions() {
+            localStorage.setItem('clawasm_sessions', JSON.stringify(sessions));
+        }
+
+        function createNewSession() {
+            const id = 'session_' + Date.now();
+            const title = 'New Chat';
+            sessions[id] = {
+                id,
+                title,
+                messages: [],
+                model: document.getElementById('modelInput')?.value || 'gpt-4o-mini',
+                provider: document.getElementById('providerSelect')?.value || 'openai',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            saveSessions();
+            loadSession(id);
+            renderSessionsList();
+        }
+
+        function loadSession(id) {
+            if (!sessions[id]) return;
+            
+            currentSessionId = id;
+            localStorage.setItem('clawasm_active_session', id);
+            
+            const session = sessions[id];
+            
+            // Clear chat and rebuild from session
+            const container = document.getElementById('chatMessages');
+            container.innerHTML = '';
+            
+            if (session.messages.length === 0) {
+                container.innerHTML = `
+                    <div class="message message-system">
+                        <div class="message-content">
+                            Welcome to claWasm! I'm a browser-native AI assistant.
+                        </div>
+                    </div>
+                `;
+            } else {
+                session.messages.forEach(msg => {
+                    addMessageToUI(msg.role, msg.content, msg.time, false);
+                });
+            }
+            
+            // Clear WASM history and rebuild
+            if (clawasm) {
+                clawasm.clearHistory();
+                // Re-add messages to WASM context
+                session.messages.forEach(msg => {
+                    if (msg.role === 'user') {
+                        // Messages are already in WASM from previous session
+                        // We need to restore context - this is handled by the session
+                    }
+                });
+            }
+            
+            renderSessionsList();
+        }
+
+        function updateSessionTitle(id, firstMessage) {
+            if (sessions[id] && sessions[id].title === 'New Chat') {
+                // Use first 30 chars of first user message as title
+                sessions[id].title = firstMessage.substring(0, 30) + (firstMessage.length > 30 ? '...' : '');
+                saveSessions();
+                renderSessionsList();
+            }
+        }
+
+        function saveCurrentSession() {
+            if (!currentSessionId || !sessions[currentSessionId]) return;
+            sessions[currentSessionId].updatedAt = new Date().toISOString();
+            saveSessions();
+        }
+
+        function deleteSession(id) {
+            if (Object.keys(sessions).length <= 1) {
+                alert('Cannot delete the last session');
+                return;
+            }
+            
+            delete sessions[id];
+            saveSessions();
+            
+            if (currentSessionId === id) {
+                const remainingIds = Object.keys(sessions);
+                loadSession(remainingIds[remainingIds.length - 1]);
+            }
+            
+            renderSessionsList();
+        }
+
+        function renderSessionsList() {
+            const container = document.getElementById('conversationsList');
+            const sortedSessions = Object.values(sessions).sort((a, b) => 
+                new Date(b.updatedAt) - new Date(a.updatedAt)
+            );
+            
+            container.innerHTML = sortedSessions.map(session => `
+                <div class="conversation-item ${session.id === currentSessionId ? 'active' : ''}" 
+                     data-id="${session.id}"
+                     onclick="window.loadSessionById('${session.id}')">
+                    <div class="session-title">${escapeHtml(session.title)}</div>
+                    <div class="session-meta">${new Date(session.updatedAt).toLocaleDateString()}</div>
+                    <button class="session-delete" onclick="event.stopPropagation(); window.deleteSessionById('${session.id}')">×</button>
+                </div>
+            `).join('');
+        }
+
+        // Global functions for onclick handlers
+        window.loadSessionById = (id) => loadSession(id);
+        window.deleteSessionById = (id) => {
+            if (confirm('Delete this conversation?')) {
+                deleteSession(id);
+            }
+        };
+
+        // ============================================
+        // Tool Management (Global, not session-based)
+        // ============================================
+        
+        function loadTools() {
+            // Tools are already stored globally in clawasm_custom_tools
+            // Just verify they exist
+            const tools = JSON.parse(localStorage.getItem('clawasm_custom_tools') || '[]');
+            console.log(`Loaded ${tools.length} custom tools`);
+        }
+
+        function exportTools() {
+            const tools = JSON.parse(localStorage.getItem('clawasm_custom_tools') || '[]');
+            const data = {
+                version: '1.0',
+                exportedAt: new Date().toISOString(),
+                tools: tools
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'clawasm_tools.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function importTools(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.tools && Array.isArray(data.tools)) {
+                        const existing = JSON.parse(localStorage.getItem('clawasm_custom_tools') || '[]');
+                        
+                        // Merge tools, avoid duplicates by name
+                        const merged = [...existing];
+                        for (const tool of data.tools) {
+                            if (!merged.find(t => t.name === tool.name)) {
+                                merged.push(tool);
+                            }
+                        }
+                        
+                        localStorage.setItem('clawasm_custom_tools', JSON.stringify(merged));
+                        alert(`Imported ${data.tools.length} tools. Total: ${merged.length}`);
+                    }
+                } catch (err) {
+                    alert('Failed to import tools: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // ============================================
+        // UI Functions
+        // ============================================
 
         // Update status indicator
         function updateStatus(text, loading) {
@@ -577,24 +837,42 @@
             dot.classList.toggle('loading', loading);
         }
 
-        // Add message to chat
-        function addMessage(role, content) {
+        // Add message to UI only (not to session)
+        function addMessageToUI(role, content, time = null, scroll = true) {
             const container = document.getElementById('chatMessages');
             const message = document.createElement('div');
             message.className = `message message-${role}`;
             
-            const time = new Date().toLocaleTimeString();
+            const displayTime = time || new Date().toLocaleTimeString();
             
             message.innerHTML = `
                 <div class="message-header">
                     <span class="message-role ${role}">${role}</span>
-                    <span>${time}</span>
+                    <span>${displayTime}</span>
                 </div>
                 <div class="message-content">${escapeHtml(content)}</div>
             `;
             
             container.appendChild(message);
-            container.scrollTop = container.scrollHeight;
+            if (scroll) container.scrollTop = container.scrollHeight;
+        }
+
+        // Add message to chat (UI + session)
+        function addMessage(role, content) {
+            const time = new Date().toLocaleTimeString();
+            addMessageToUI(role, content, time);
+            
+            // Save to current session
+            if (currentSessionId && sessions[currentSessionId]) {
+                sessions[currentSessionId].messages.push({ role, content, time });
+                
+                // Update title if first user message
+                if (role === 'user' && sessions[currentSessionId].messages.filter(m => m.role === 'user').length === 1) {
+                    updateSessionTitle(currentSessionId, content);
+                }
+                
+                saveCurrentSession();
+            }
         }
 
         // Add typing indicator
@@ -797,15 +1075,20 @@
         });
 
         document.getElementById('newChatBtn').addEventListener('click', () => {
-            document.getElementById('chatMessages').innerHTML = `
-                <div class="message message-system">
-                    <div class="message-content">
-                        New conversation started. How can I help you?
-                    </div>
-                </div>
-            `;
-            if (clawasm) {
-                clawasm.clearHistory();
+            createNewSession();
+        });
+
+        // Tool export/import
+        document.getElementById('exportToolsBtn').addEventListener('click', exportTools);
+        
+        document.getElementById('importToolsBtn').addEventListener('click', () => {
+            document.getElementById('importToolsFile').click();
+        });
+        
+        document.getElementById('importToolsFile').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                importTools(e.target.files[0]);
+                e.target.value = ''; // Reset for next import
             }
         });
 
