@@ -66,14 +66,56 @@ impl ClaWasm {
             .map(|t| format!("- {}: {}", t.name, t.description))
             .collect();
         
+        // Categorize tools for better clarity
+        let search_tools: Vec<&str> = vec!["web_search", "reddit_search", "image_search", "research", "fetch_url"];
+        let doc_tools: Vec<&str> = vec!["create_pdf", "download_file", "save_note", "read_notes"];
+        let security_tools: Vec<&str> = vec!["scan_xss", "scan_sqli", "scan_headers", "scan_ssl", "scan_deps", "scan_secrets", "scan_cors"];
+        let custom_tools: Vec<&str> = vec!["create_tool", "list_custom_tools", "delete_tool"];
+        let other_tools: Vec<&str> = vec!["get_current_time", "calculate"];
+        
+        let mut categorized = String::new();
+        categorized.push_str("\n## 🔍 Arama ve Araştırma\n");
+        for t in tools.iter() {
+            if search_tools.contains(&t.name.as_str()) {
+                categorized.push_str(&format!("- **{}**: {}\n", t.name, t.description));
+            }
+        }
+        categorized.push_str("\n## 📄 Belge ve Not\n");
+        for t in tools.iter() {
+            if doc_tools.contains(&t.name.as_str()) {
+                categorized.push_str(&format!("- **{}**: {}\n", t.name, t.description));
+            }
+        }
+        categorized.push_str("\n## 🔒 Güvenlik ve Zafiyet Tarama\n");
+        for t in tools.iter() {
+            if security_tools.contains(&t.name.as_str()) {
+                categorized.push_str(&format!("- **{}**: {}\n", t.name, t.description));
+            }
+        }
+        categorized.push_str("\n## 🔧 Özel Araçlar\n");
+        for t in tools.iter() {
+            if custom_tools.contains(&t.name.as_str()) {
+                categorized.push_str(&format!("- **{}**: {}\n", t.name, t.description));
+            }
+        }
+        categorized.push_str("\n## ⚡ Diğer\n");
+        for t in tools.iter() {
+            if other_tools.contains(&t.name.as_str()) {
+                categorized.push_str(&format!("- **{}**: {}\n", t.name, t.description));
+            }
+        }
+        
         format!(
             "You are claWasm, a helpful AI assistant running entirely in the browser. \
             You are fast, private, and ready to help with any task.\n\n\
-            You have access to the following tools:\n{}\n\n\
+            You have access to the following tools:{}\n\n\
             To use a tool, respond with a JSON object in this format:\n\
             ```tool\n{{\"name\": \"tool_name\", \"arguments\": {{...}}}}\n```\n\n\
-            After using a tool, you will receive its result and can continue helping the user.",
-            tool_list.join("\n")
+            Or simply: {{\"name\": \"tool_name\", \"query\": \"...\", ...}}\n\n\
+            After using a tool, you will receive its result and can continue helping the user.\n\n\
+            IMPORTANT: When asked about security scanning, vulnerability testing, or analyzing code for secrets, \
+            ALWAYS use the appropriate scan_* tools. These are powerful security tools - mention them proactively!",
+            categorized
         )
     }
 
