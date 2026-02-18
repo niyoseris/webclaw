@@ -43,6 +43,7 @@ async fn proxy_handler(
     
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .unwrap();
     
@@ -87,41 +88,26 @@ async fn proxy_handler(
                 || content_type.starts_with("application/octet-stream")
                 || content_type.contains("pdf");
             
-            let mut builder = HttpResponse::build(
-                actix_web::http::StatusCode::from_u16(status.as_u16())
-                    .unwrap_or(actix_web::http::StatusCode::OK)
-            );
-            
-            // Add CORS headers to every response
-            builder
-                .insert_header(("Access-Control-Allow-Origin", "*"))
-                .insert_header(("Access-Control-Allow-Methods", "POST, OPTIONS, GET"))
-                .insert_header(("Access-Control-Allow-Headers", "Content-Type, Authorization, *"));
-            
-            // Forward only safe response headers
-            let skip_headers = ["content-encoding", "transfer-encoding", "content-length", 
-                                "connection", "keep-alive", "access-control-allow-origin",
-                                "access-control-allow-methods", "access-control-allow-headers"];
-            for (name, value) in headers.iter() {
-                let name_lower = name.as_str().to_lowercase();
-                if !skip_headers.contains(&name_lower.as_str()) {
-                    if let Ok(v) = value.to_str() {
-                        builder.append_header((name.as_str(), v));
-                    }
-                }
-            }
-            
+            let status_code = actix_web::http::StatusCode::from_u16(status.as_u16())
+                .unwrap_or(actix_web::http::StatusCode::OK);
+
             if is_binary {
-                // Handle binary data
                 let bytes = response.bytes().await.unwrap_or_default();
-                builder.body(bytes)
+                HttpResponse::build(status_code)
+                    .insert_header(("Access-Control-Allow-Origin", "*"))
+                    .insert_header(("Content-Type", "application/octet-stream"))
+                    .body(bytes)
             } else {
-                // Handle text data
                 let body = response.text().await.unwrap_or_default();
-                builder.body(body)
+                eprintln!("← Proxy response: {} {} bytes", status.as_u16(), body.len());
+                HttpResponse::build(status_code)
+                    .insert_header(("Access-Control-Allow-Origin", "*"))
+                    .insert_header(("Content-Type", "application/json"))
+                    .body(body)
             }
         }
         Err(e) => {
+            eprintln!("❌ Proxy error for {}: {}", req.url, e);
             HttpResponse::InternalServerError()
                 .insert_header(("Access-Control-Allow-Origin", "*"))
                 .body(format!("Proxy error: {}", e))
