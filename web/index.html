@@ -1264,8 +1264,23 @@
                 }
                 const base64 = btoa(binary);
                 
-                // Save to localStorage
-                localStorage.setItem(fileId, base64);
+                // Save PDF metadata and data to localStorage (matching Rust expected format)
+                const pdfMetadata = {
+                    id: fileId,
+                    title: title,
+                    content: content,
+                    filename: title + '.pdf',
+                    created_at: new Date().toISOString()
+                };
+                localStorage.setItem(fileId, JSON.stringify(pdfMetadata));
+                localStorage.setItem(fileId + '_data', base64);
+                
+                // Also save to clawasm_files index
+                const files = JSON.parse(localStorage.getItem('clawasm_files') || '[]');
+                if (!files.includes(fileId)) {
+                    files.push(fileId);
+                    localStorage.setItem('clawasm_files', JSON.stringify(files));
+                }
                 
                 return { success: true, fileId: fileId, size: pdfBytes.length };
             } catch (e) {
