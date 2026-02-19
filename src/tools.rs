@@ -998,7 +998,7 @@ struct RedditPost {
     url: String,
 }
 
-/// Create PDF document (browser-side using jsPDF via JavaScript)
+/// Create PDF document using HTML-to-PDF (browser print dialog)
 async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue> {
     let title = args["title"].as_str()
         .ok_or_else(|| JsValue::from_str("Missing 'title' parameter"))?;
@@ -1038,252 +1038,286 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
     file_index.push(file_id.clone());
     storage.set_item("clawasm_files", &serde_json::to_string(&file_index).unwrap())?;
     
-    // Prepare images JSON for JavaScript
+    // Prepare images JSON
     let images_json = images
         .map(|imgs| serde_json::to_string(imgs).unwrap_or_else(|_| "[]".to_string()))
         .unwrap_or_else(|| "[]".to_string());
     
-    // Escape content for JavaScript string
+    // Escape content for HTML
     let content_escaped = content
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
     
-    // Escape title for JavaScript
+    // Escape title for HTML
     let title_escaped = title
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
     
-    // Use jsPDF with better formatting
+    // Convert markdown-like content to HTML
+    let html_content = markdown_to_html(&content_escaped);
+    
+    // Create HTML document for printing
     let js_code = format!(r#"
         (async function() {{
-            const {{ jsPDF }} = window.jspdf;
-            const doc = new jsPDF({{
-                putOnlyUsedFonts: true,
-                compress: true
-            }});
-            
-            // Parse content
-            const content = "{}";
             const title = "{}";
-            
-            // Add title
-            doc.setFontSize(22);
-            doc.setTextColor(20, 20, 20);
-            doc.setFont('helvetica', 'bold');
-            const titleLines = doc.splitTextToSize(title, 170);
-            let y = 25;
-            for (const line of titleLines) {{
-                if (y > 275) {{ doc.addPage(); y = 25; }}
-                doc.text(line, 20, y);
-                y += 9;
-            }}
-            
-            // Add separator line
-            y += 3;
-            doc.setDrawColor(180, 180, 180);
-            doc.setLineWidth(0.5);
-            doc.line(20, y, 190, y);
-            y += 12;
-            
-            // Add content with markdown-like formatting
-            doc.setFontSize(10);
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(40, 40, 40);
-            
-            // Split content into paragraphs
-            const paragraphs = content.split('\\n');
-            let pageCount = 1;
-            
-            for (const para of paragraphs) {{
-                const trimmed = para.trim();
-                
-                // Skip empty lines but add small gap
-                if (trimmed === '') {{
-                    y += 3;
-                    continue;
-                }}
-                
-                // Check for markdown headers
-                if (trimmed.startsWith('### ')) {{
-                    if (y > 260) {{ doc.addPage(); y = 25; pageCount++; }}
-                    y += 4;
-                    doc.setFontSize(12);
-                    doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(40, 40, 40);
-                    doc.text(trimmed.replace('### ', ''), 20, y);
-                    y += 7;
-                    doc.setFontSize(10);
-                    doc.setFont('helvetica', 'normal');
-                    doc.setTextColor(60, 60, 60);
-                    continue;
-                }}
-                
-                if (trimmed.startsWith('## ')) {{
-                    if (y > 255) {{ doc.addPage(); y = 25; pageCount++; }}
-                    y += 6;
-                    doc.setFontSize(14);
-                    doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(30, 30, 30);
-                    doc.text(trimmed.replace('## ', ''), 20, y);
-                    y += 8;
-                    doc.setFontSize(10);
-                    doc.setFont('helvetica', 'normal');
-                    doc.setTextColor(60, 60, 60);
-                    continue;
-                }}
-                
-                if (trimmed.startsWith('# ')) {{
-                    continue; // Skip main title, already added
-                }}
-                
-                // Check for bullet points
-                if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {{
-                    const bulletText = trimmed.substring(2);
-                    const lines = doc.splitTextToSize('• ' + bulletText, 165);
-                    for (const line of lines) {{
-                        if (y > 275) {{ doc.addPage(); y = 25; pageCount++; }}
-                        doc.text(line, 25, y);
-                        y += 5;
-                    }}
-                    y += 2;
-                    continue;
-                }}
-                
-                // Check for numbered lists
-                const numMatch = trimmed.match(/^(\\d+)\\.\\s/);
-                if (numMatch) {{
-                    const lines = doc.splitTextToSize(trimmed, 170);
-                    for (const line of lines) {{
-                        if (y > 275) {{ doc.addPage(); y = 25; pageCount++; }}
-                        doc.text(line, 20, y);
-                        y += 5;
-                    }}
-                    y += 2;
-                    continue;
-                }}
-                
-                // Check for bold text (**text**)
-                let processedText = trimmed;
-                let hasBold = processedText.includes('**');
-                
-                // Regular paragraph
-                const lines = doc.splitTextToSize(processedText, 170);
-                for (const line of lines) {{
-                    if (y > 275) {{ doc.addPage(); y = 25; pageCount++; }}
-                    
-                    // Handle bold text
-                    if (hasBold && line.includes('**')) {{
-                        // Simple approach: just remove ** markers for now
-                        doc.text(line.replace(/\\*\\*/g, ''), 20, y);
-                    }} else {{
-                        doc.text(line, 20, y);
-                    }}
-                    y += 5;
-                }}
-                y += 3;
-            }}
-            
-            // Add images via proxy to avoid CORS
+            const contentHtml = `{}`;
             const images = {};
-            let imageCount = 0;
-            for (const img of images) {{
-                try {{
-                    const imgUrl = img.url;
-                    if (!imgUrl) continue;
-                    
-                    imageCount++;
-                    doc.addPage();
-                    y = 25;
-                    pageCount++;
-                    
-                    // Add image title/caption
-                    if (img.caption) {{
-                        doc.setFontSize(11);
-                        doc.setFont('helvetica', 'italic');
-                        doc.setTextColor(80, 80, 80);
-                        doc.text(img.caption, 20, y);
-                        y += 10;
-                    }}
-                    
-                    // Fetch image via proxy
-                    const proxyBody = JSON.stringify({{
-                        url: imgUrl,
-                        method: 'GET',
-                        headers: {{}}
-                    }});
-                    
-                    const response = await fetch('http://localhost:3000/proxy', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: proxyBody
-                    }});
-                    
-                    if (response.ok) {{
-                        const blob = await response.blob();
-                        const reader = new FileReader();
-                        const base64 = await new Promise((resolve, reject) => {{
-                            reader.onload = () => resolve(reader.result);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
+            const filename = "{}";
+            
+            // Build images HTML
+            let imagesHtml = '';
+            if (images && images.length > 0) {{
+                imagesHtml = '<div class="images-section"><h2>Images</h2>';
+                for (const img of images) {{
+                    try {{
+                        // Fetch image via proxy
+                        const proxyBody = JSON.stringify({{
+                            url: img.url,
+                            method: 'GET',
+                            headers: {{}}
                         }});
                         
-                        // Calculate dimensions to fit page
-                        const pageWidth = 170;
-                        const pageHeight = 200;
-                        let width = img.width || pageWidth;
-                        let height = img.height || 0;
+                        const response = await fetch('http://localhost:3000/proxy', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: proxyBody
+                        }});
                         
-                        // If no height, calculate from aspect ratio
-                        if (!height || height === 'auto') {{
-                            height = pageHeight * 0.6;
+                        if (response.ok) {{
+                            const blob = await response.blob();
+                            const dataUrl = await new Promise((resolve, reject) => {{
+                                const reader = new FileReader();
+                                reader.onload = () => resolve(reader.result);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            }});
+                            
+                            imagesHtml += `<figure class="image-figure">
+                                <img src="${{dataUrl}}" alt="${{img.caption || 'Image'}}" class="document-image">
+                                ${{img.caption ? `<figcaption>${{img.caption}}</figcaption>` : ''}}
+                            </figure>`;
                         }}
-                        
-                        // Scale down if too large
-                        if (width > pageWidth) {{
-                            const scale = pageWidth / width;
-                            width = pageWidth;
-                            height = height * scale;
-                        }}
-                        if (height > pageHeight) {{
-                            const scale = pageHeight / height;
-                            height = pageHeight;
-                            width = width * scale;
-                        }}
-                        
-                        doc.addImage(base64, 'JPEG', 20, y, width, height);
-                    }} else {{
-                        doc.setFontSize(9);
-                        doc.setTextColor(150, 150, 150);
-                        doc.text('[Image could not be loaded]', 20, y);
+                    }} catch (e) {{
+                        console.error('Image load error:', e);
                     }}
-                }} catch (e) {{
-                    console.error('Image error:', e);
-                    doc.setFontSize(9);
-                    doc.setTextColor(150, 150, 150);
-                    doc.text('[Image error: ' + e.message + ']', 20, y);
                 }}
+                imagesHtml += '</div>';
             }}
             
-            // Add footer
-            const totalPages = doc.internal.getNumberOfPages();
-            for (let i = 1; i <= totalPages; i++) {{
-                doc.setPage(i);
-                doc.setFontSize(8);
-                doc.setTextColor(150, 150, 150);
-                doc.text('Created by claWasm | Page ' + i + '/' + totalPages, 105, 287, {{ align: 'center' }});
+            // Create full HTML document
+            const htmlDoc = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${{title}}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: #fff;
+        }}
+        
+        .document-header {{
+            text-align: center;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }}
+        
+        .document-title {{
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 10px;
+        }}
+        
+        .document-meta {{
+            font-size: 12px;
+            color: #666;
+        }}
+        
+        .document-content {{
+            font-size: 14px;
+            color: #333;
+        }}
+        
+        .document-content h1 {{
+            font-size: 24px;
+            color: #1a1a1a;
+            margin: 30px 0 15px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e5e7eb;
+        }}
+        
+        .document-content h2 {{
+            font-size: 20px;
+            color: #1f2937;
+            margin: 25px 0 12px 0;
+        }}
+        
+        .document-content h3 {{
+            font-size: 16px;
+            color: #374151;
+            margin: 20px 0 10px 0;
+        }}
+        
+        .document-content p {{
+            margin: 12px 0;
+            text-align: justify;
+        }}
+        
+        .document-content ul, .document-content ol {{
+            margin: 12px 0 12px 25px;
+        }}
+        
+        .document-content li {{
+            margin: 6px 0;
+        }}
+        
+        .document-content code {{
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }}
+        
+        .document-content pre {{
+            background: #1f2937;
+            color: #e5e7eb;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+        }}
+        
+        .document-content pre code {{
+            background: none;
+            color: inherit;
+        }}
+        
+        .document-content blockquote {{
+            border-left: 4px solid #2563eb;
+            padding-left: 15px;
+            margin: 15px 0;
+            color: #4b5563;
+            font-style: italic;
+        }}
+        
+        .document-content strong {{
+            font-weight: 600;
+        }}
+        
+        .document-content em {{
+            font-style: italic;
+        }}
+        
+        .images-section {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #e5e7eb;
+        }}
+        
+        .image-figure {{
+            margin: 20px 0;
+            text-align: center;
+        }}
+        
+        .document-image {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        
+        figcaption {{
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+            font-style: italic;
+        }}
+        
+        .document-footer {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            text-align: center;
+            font-size: 11px;
+            color: #9ca3af;
+        }}
+        
+        /* Print styles */
+        @media print {{
+            body {{
+                padding: 0;
+                max-width: none;
             }}
             
-            // Save
-            doc.save('{}.pdf');
-            return 'PDF created: ' + totalPages + ' pages, ' + imageCount + ' images';
+            .document-header {{
+                border-bottom-color: #000;
+            }}
+            
+            .document-image {{
+                page-break-inside: avoid;
+            }}
+            
+            .image-figure {{
+                page-break-inside: avoid;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <header class="document-header">
+        <h1 class="document-title">${{title}}</h1>
+        <div class="document-meta">Created by claWasm • ${{new Date().toLocaleDateString()}}</div>
+    </header>
+    
+    <main class="document-content">
+        ${{contentHtml}}
+        ${{imagesHtml}}
+    </main>
+    
+    <footer class="document-footer">
+        Generated by claWasm - Browser-based AI Assistant
+    </footer>
+</body>
+</html>`;
+            
+            // Open in new window and trigger print
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {{
+                return 'Error: Pop-up blocked. Please allow pop-ups and try again.';
+            }}
+            
+            printWindow.document.write(htmlDoc);
+            printWindow.document.close();
+            
+            // Wait for images to load then print
+            setTimeout(() => {{
+                printWindow.print();
+            }}, 500);
+            
+            return 'PDF ready! Use the print dialog to save as PDF.';
         }})()
     "#, 
-        content_escaped,
         title_escaped,
+        html_content,
         images_json,
         filename
     );
@@ -1295,9 +1329,124 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
     let result_str = result.as_string().unwrap_or_else(|| "PDF created".to_string());
     
     Ok(format!(
-        "✅ PDF '{}' created!\n📄 File: {}.pdf\n{}\n\n� PDF saved to Downloads folder.",
+        "✅ PDF '{}' created!\n📄 File: {}.pdf\n{}\n\n💡 Use 'Save as PDF' in the print dialog that opened.",
         title, filename, result_str
     ))
+}
+
+/// Convert markdown-like text to HTML
+fn markdown_to_html(text: &str) -> String {
+    let mut html = String::new();
+    let mut in_code_block = false;
+    let mut code_content = String::new();
+    
+    for line in text.lines() {
+        // Code blocks
+        if line.starts_with("```") {
+            if in_code_block {
+                html.push_str("</code></pre>\n");
+                in_code_block = false;
+            } else {
+                html.push_str("<pre><code>");
+                in_code_block = true;
+            }
+            continue;
+        }
+        
+        if in_code_block {
+            html.push_str(&html_escape(line));
+            html.push('\n');
+            continue;
+        }
+        
+        let trimmed = line.trim();
+        
+        // Empty line
+        if trimmed.is_empty() {
+            html.push_str("<br>\n");
+            continue;
+        }
+        
+        // Headers
+        if trimmed.starts_with("### ") {
+            html.push_str(&format!("<h3>{}</h3>\n", html_escape(&trimmed[4..])));
+            continue;
+        }
+        if trimmed.starts_with("## ") {
+            html.push_str(&format!("<h2>{}</h2>\n", html_escape(&trimmed[3..])));
+            continue;
+        }
+        if trimmed.starts_with("# ") {
+            html.push_str(&format!("<h1>{}</h1>\n", html_escape(&trimmed[2..])));
+            continue;
+        }
+        
+        // Bullet lists
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            let content = process_inline_formatting(&trimmed[2..]);
+            html.push_str(&format!("<li>{}</li>\n", content));
+            continue;
+        }
+        
+        // Numbered lists
+        if let Some(pos) = trimmed.find(". ") {
+            if pos > 0 && trimmed[..pos].chars().all(|c| c.is_numeric()) {
+                let content = process_inline_formatting(&trimmed[pos + 2..]);
+                html.push_str(&format!("<li>{}</li>\n", content));
+                continue;
+            }
+        }
+        
+        // Blockquotes
+        if trimmed.starts_with("> ") {
+            let content = process_inline_formatting(&trimmed[2..]);
+            html.push_str(&format!("<blockquote>{}</blockquote>\n", content));
+            continue;
+        }
+        
+        // Regular paragraph
+        let content = process_inline_formatting(trimmed);
+        html.push_str(&format!("<p>{}</p>\n", content));
+    }
+    
+    html
+}
+
+/// Escape HTML special characters
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Process inline formatting (bold, italic, code)
+fn process_inline_formatting(s: &str) -> String {
+    let mut result = html_escape(s);
+    
+    // Bold: **text** -> <strong>text</strong>
+    while let Some(start) = result.find("**") {
+        if let Some(end) = result[start + 2..].find("**") {
+            let bold_text = &result[start + 2..start + 2 + end];
+            let replacement = format!("<strong>{}</strong>", bold_text);
+            result = format!("{}{}{}", &result[..start], replacement, &result[start + 2 + end + 2..]);
+        } else {
+            break;
+        }
+    }
+    
+    // Inline code: `code` -> <code>code</code>
+    while let Some(start) = result.find('`') {
+        if let Some(end) = result[start + 1..].find('`') {
+            let code_text = &result[start + 1..start + 1 + end];
+            let replacement = format!("<code>{}</code>", code_text);
+            result = format!("{}{}{}", &result[..start], replacement, &result[start + 1 + end + 1..]);
+        } else {
+            break;
+        }
+    }
+    
+    result
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
