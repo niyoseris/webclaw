@@ -1046,23 +1046,17 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
     file_index.push(file_id.clone());
     storage.set_item("clawasm_files", &serde_json::to_string(&file_index).unwrap())?;
     
-    // Trigger download
+    // Trigger download using data URL (more reliable for large files)
     let js_code = format!(r#"
         (function() {{
-            const pdfData = atob("{}");
-            const bytes = new Uint8Array(pdfData.length);
-            for (let i = 0; i < pdfData.length; i++) {{
-                bytes[i] = pdfData.charCodeAt(i);
-            }}
-            const blob = new Blob([bytes], {{ type: "application/pdf" }});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = "{}.pdf";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const pdfData = "{}";
+            const link = document.createElement('a');
+            link.href = 'data:application/pdf;base64,' + pdfData;
+            link.download = "{}.pdf";
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
             return "Download started";
         }})()
     "#, base64_pdf, filename);
