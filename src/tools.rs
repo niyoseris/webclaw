@@ -1209,11 +1209,28 @@ startxref
     Ok(pdf.into_bytes())
 }
 
-/// Escape special characters for PDF string
+/// Escape special characters for PDF string and convert Turkish chars
 fn escape_pdf_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
+    let turkish = convert_turkish(s);
+    turkish.replace('\\', "\\\\")
         .replace('(', "\\(")
         .replace(')', "\\)")
+}
+
+/// Convert Turkish characters to ASCII equivalents for PDF
+fn convert_turkish(s: &str) -> String {
+    s.replace('ı', "i")
+        .replace('İ', "I")
+        .replace('ğ', "g")
+        .replace('Ğ', "G")
+        .replace('ş', "s")
+        .replace('Ş', "S")
+        .replace('ç', "c")
+        .replace('Ç', "C")
+        .replace('ö', "o")
+        .replace('Ö', "O")
+        .replace('ü', "u")
+        .replace('Ü', "U")
 }
 
 /// Simple base64 encoding (no external dependency)
