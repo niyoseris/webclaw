@@ -1254,7 +1254,15 @@
                 }
                 
                 const pdfBytes = await pdfDoc.save();
-                const base64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
+                
+                // Convert to base64 without stack overflow - use chunked approach
+                let binary = '';
+                const bytes = new Uint8Array(pdfBytes);
+                const len = bytes.byteLength;
+                for (let i = 0; i < len; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                const base64 = btoa(binary);
                 
                 // Save to localStorage
                 localStorage.setItem(fileId, base64);
