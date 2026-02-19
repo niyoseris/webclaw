@@ -859,9 +859,9 @@
             
             // Process content to make file_id clickable
             let processedContent = escapeHtml(content);
-            // Match various PDF link formats
+            // Match any file_id link format - more flexible
             processedContent = processedContent.replace(
-                /\[([^\]]*PDF[^\]]*)\]\(file_id: (pdf_\d+)\)/g,
+                /\[([^\]]+)\]\(\s*file_id:\s*(pdf_\d+)\s*\)/gi,
                 '<a href="#" onclick="downloadPdf(\'$2\'); return false;" style="color: #2563eb; text-decoration: underline; cursor: pointer;">$1</a>'
             );
             
