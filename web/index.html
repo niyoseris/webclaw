@@ -1119,6 +1119,16 @@
 
         // Initialize app
         initApp();
+
+        // PDF download function
+        window.downloadPdf = async function(fileId) {
+            try {
+                const result = await claWasm.call_tool("download_file", { file_id: fileId });
+                addMessage("assistant", result);
+            } catch (e) {
+                addMessage("assistant", "❌ Download error: " + e.message);
+            }
+        };
     </script>
 </body>
 </html>

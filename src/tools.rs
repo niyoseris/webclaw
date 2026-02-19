@@ -1081,9 +1081,15 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
     
     let result_str = result.as_string().unwrap_or_else(|| "PDF created".to_string());
     
+    // Create clickable download link - use simpler format
+    let download_link = format!(
+        "[📥 PDF'i tıkla ve indir](file_id: {})",
+        file_id
+    );
+    
     Ok(format!(
-        "✅ PDF '{}' created!\n📄 File: {}.pdf\n📊 Size: {} bytes\n\n💡 PDF downloaded automatically.\n💾 Also saved for later download with file_id: {}",
-        title, filename, pdf_bytes.len(), file_id
+        "✅ PDF '{}' created!\n📄 File: {}.pdf\n📊 Size: {} bytes\n\n💾 Saved! {}\n💡 file_id: {}",
+        title, filename, pdf_bytes.len(), download_link, file_id
     ))
 }
 
