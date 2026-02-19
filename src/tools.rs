@@ -998,7 +998,7 @@ struct RedditPost {
     url: String,
 }
 
-/// Create PDF document using pdf-writer (WASM compatible)
+/// Create PDF document using JavaScript pdf-lib with font embedding
 async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue> {
     let title = args["title"].as_str()
         .ok_or_else(|| JsValue::from_str("Missing 'title' parameter"))?;
@@ -1013,83 +1013,55 @@ async fn execute_create_pdf(args: &serde_json::Value) -> Result<String, JsValue>
     // Generate unique file ID
     let file_id = format!("pdf_{}", chrono::Utc::now().timestamp_millis());
     
-    // Generate PDF using pdf-writer
-    let pdf_bytes = generate_pdf(title, content)?;
+    // Escape content for JavaScript
+    let title_escaped = title.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+    let content_escaped = content.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
     
-    // Store PDF data in localStorage
-    let storage = window.local_storage()?.ok_or_else(|| JsValue::from_str("No localStorage"))?;
-    
-    // Convert PDF bytes to base64 for storage
-    let base64_pdf = base64_encode(&pdf_bytes);
-    
-    let pdf_data = PdfFile {
-        id: file_id.clone(),
-        title: title.to_string(),
-        content: content.to_string(),
-        filename: format!("{}.pdf", filename),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-    
-    let pdf_json = serde_json::to_string(&pdf_data)
-        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
-    storage.set_item(&file_id, &pdf_json)?;
-    
-    // Store raw PDF bytes (base64 encoded)
-    storage.set_item(&format!("{}_data", file_id), &base64_pdf)?;
-    
-    // Also store in file index
-    let mut file_index: Vec<String> = storage.get_item("clawasm_files")
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-    file_index.push(file_id.clone());
-    storage.set_item("clawasm_files", &serde_json::to_string(&file_index).unwrap())?;
-    
-    // Trigger download using Blob (most reliable)
+    // Call JavaScript PDF generator with font support
     let js_code = format!(r#"
-        (function() {{
+        (async function() {{
             try {{
-                const base64 = "{}";
-                const binaryString = atob(base64);
-                const len = binaryString.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {{
-                    bytes[i] = binaryString.charCodeAt(i);
+                if (typeof window.generatePdfWithFont === 'function') {{
+                    const result = await window.generatePdfWithFont("{}", "{}", "{}");
+                    return JSON.stringify(result);
+                }} else {{
+                    return JSON.stringify({{ success: false, error: "PDF generator not loaded" }});
                 }}
-                const blob = new Blob([bytes], {{ type: "application/pdf" }});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "{}";
-                a.style.display = "none";
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(function() {{
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                }}, 100);
-                return "OK";
             }} catch(e) {{
-                return "Error: " + e.message;
+                return JSON.stringify({{ success: false, error: e.message }});
             }}
         }})()
-    "#, base64_pdf.replace('"', "\\\""), filename);
+    "#, title_escaped, content_escaped, file_id);
     
-    let result = js_sys::eval(&js_code)
+    let result_promise = js_sys::eval(&js_code)
         .map_err(|e| JsValue::from_str(&format!("JS error: {:?}", e)))?;
     
-    let result_str = result.as_string().unwrap_or_else(|| "PDF created".to_string());
+    let result = js_sys::Promise::from(result_promise);
+    let result = wasm_bindgen_futures::JsFuture::from(result).await
+        .map_err(|e| JsValue::from_str(&format!("Promise error: {:?}", e)))?;
     
-    // Create clickable download link - use simpler format
+    let result_str = result.as_string()
+        .ok_or_else(|| JsValue::from_str("Invalid result"))?;
+    
+    let pdf_result: serde_json::Value = serde_json::from_str(&result_str)
+        .map_err(|e| JsValue::from_str(&format!("Parse error: {}", e)))?;
+    
+    if !pdf_result["success"].as_bool().unwrap_or(false) {
+        let error = pdf_result["error"].as_str().unwrap_or("Unknown error");
+        return Err(JsValue::from_str(&format!("PDF generation failed: {}", error)));
+    }
+    
+    let size = pdf_result["size"].as_u64().unwrap_or(0);
+    
+    // Create clickable download link
     let download_link = format!(
         "[📥 PDF'i tıkla ve indir](file_id: {})",
         file_id
     );
     
     Ok(format!(
-        "✅ PDF '{}' created!\n📄 File: {}.pdf\n📊 Size: {} bytes\n\n💾 Saved! {}\n💡 file_id: {}",
-        title, filename, pdf_bytes.len(), download_link, file_id
+        "✅ PDF '{}' oluşturuldu!\n📄 Dosya: {}.pdf\n📊 Boyut: {} bytes\n\n💾 Kaydedildi! {}\n💡 file_id: {}",
+        title, filename, size, download_link, file_id
     ))
 }
 

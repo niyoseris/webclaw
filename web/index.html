@@ -603,14 +603,16 @@
     </div>
 
     <script type="module">
-        // Import the WASM module
+        // Import the WASM module and pdf-lib
         import init, { ClaWasm } from './pkg/clawasm.js';
+        import { PDFDocument, rgb, StandardFonts } from 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.esm.js';
 
         let clawasm = null;
         let isLoading = false; // Global loading state
         let currentSessionId = null;
         let sessions = {};
         let sessionLoadingStates = {}; // Per-session loading states
+        let dejavuFont = null; // Embedded font for Turkish
 
         // Initialize
         async function initApp() {
@@ -618,6 +620,17 @@
                 await init();
                 clawasm = new ClaWasm();
                 console.log('claWasm initialized');
+                
+                // Load DejaVu font for Turkish PDF support
+                try {
+                    const fontResp = await fetch('./fonts/DejaVuSans.ttf');
+                    const fontBytes = await fontResp.arrayBuffer();
+                    dejavuFont = fontBytes;
+                    console.log('DejaVu font loaded for PDF generation');
+                } catch (e) {
+                    console.warn('Could not load DejaVu font, using fallback:', e);
+                }
+                
                 updateStatus('Ready', false);
                 loadSettings();
                 loadSessions();
@@ -1127,6 +1140,121 @@
 
         // Initialize app
         initApp();
+
+        // Generate PDF with Turkish font support using pdf-lib
+        window.generatePdfWithFont = async function(title, content, fileId) {
+            try {
+                const pdfDoc = await PDFDocument.create();
+                let font;
+                
+                if (dejavuFont) {
+                    font = await pdfDoc.embedFont(dejavuFont);
+                } else {
+                    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+                }
+                
+                const page = pdfDoc.addPage([595, 842]); // A4
+                const { width, height } = page.getSize();
+                const margin = 50;
+                let y = height - margin;
+                
+                // Title
+                page.drawText(title, {
+                    x: margin,
+                    y: y,
+                    size: 24,
+                    font: font,
+                    color: rgb(0, 0, 0),
+                });
+                y -= 30;
+                
+                // Separator
+                page.drawText('='.repeat(60), {
+                    x: margin,
+                    y: y,
+                    size: 10,
+                    font: font,
+                });
+                y -= 20;
+                
+                // Content - word wrap
+                const lines = content.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) {
+                        y -= 10;
+                        continue;
+                    }
+                    
+                    // Check for headers
+                    let fontSize = 10;
+                    let text = trimmed;
+                    if (trimmed.startsWith('# ')) {
+                        fontSize = 18;
+                        text = trimmed.slice(2);
+                    } else if (trimmed.startsWith('## ')) {
+                        fontSize = 14;
+                        text = trimmed.slice(3);
+                    } else if (trimmed.startsWith('### ')) {
+                        fontSize = 12;
+                        text = trimmed.slice(4);
+                    }
+                    
+                    // Word wrap
+                    const maxWidth = width - (margin * 2);
+                    const words = text.split(' ');
+                    let currentLine = '';
+                    
+                    for (const word of words) {
+                        const testLine = currentLine ? currentLine + ' ' + word : word;
+                        const width_test = font.widthOfTextAtSize(testLine, fontSize);
+                        
+                        if (width_test > maxWidth && currentLine) {
+                            if (y < margin + 30) {
+                                // New page
+                                const newPage = pdfDoc.addPage([595, 842]);
+                                y = height - margin;
+                            }
+                            page.drawText(currentLine, {
+                                x: margin,
+                                y: y,
+                                size: fontSize,
+                                font: font,
+                            });
+                            y -= fontSize + 4;
+                            currentLine = word;
+                        } else {
+                            currentLine = testLine;
+                        }
+                    }
+                    
+                    if (currentLine) {
+                        if (y < margin + 30) {
+                            const newPage = pdfDoc.addPage([595, 842]);
+                            y = height - margin;
+                        }
+                        page.drawText(currentLine, {
+                            x: margin,
+                            y: y,
+                            size: fontSize,
+                            font: font,
+                        });
+                        y -= fontSize + 4;
+                    }
+                }
+                
+                const pdfBytes = await pdfDoc.save();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
+                
+                // Save to localStorage
+                localStorage.setItem(fileId, base64);
+                
+                return { success: true, fileId: fileId, size: pdfBytes.length };
+            } catch (e) {
+                console.error('PDF generation error:', e);
+                return { success: false, error: e.message };
+            }
+        };
 
         // PDF download function
         window.downloadPdf = async function(fileId) {
