@@ -1091,7 +1091,7 @@ fn generate_pdf(title: &str, content: &str) -> Result<Vec<u8>, JsValue> {
     let line_height = 14.0;
     let mut pdf_content = String::new();
     
-    // Add title
+    // Add title with Unicode escape
     let title_escaped = escape_pdf_string(title);
     pdf_content.push_str(&format!("BT\n/F1 24 Tf\n{} {} Td\n({}) Tj\nET\n", 
         margin, y_pos, title_escaped));
@@ -1161,7 +1161,7 @@ fn generate_pdf(title: &str, content: &str) -> Result<Vec<u8>, JsValue> {
         }
     }
     
-    // Build complete PDF
+    // Build complete PDF with Unicode support
     let pdf = format!(r#"%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>
@@ -1183,7 +1183,7 @@ endstream
 endobj
 
 5 0 obj
-<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
 endobj
 
 xref
@@ -1209,28 +1209,41 @@ startxref
     Ok(pdf.into_bytes())
 }
 
-/// Escape special characters for PDF string and convert Turkish chars
+/// Escape special characters for PDF string using Unicode escapes
 fn escape_pdf_string(s: &str) -> String {
-    let turkish = convert_turkish(s);
-    turkish.replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-}
-
-/// Convert Turkish characters to ASCII equivalents for PDF
-fn convert_turkish(s: &str) -> String {
-    s.replace('ı', "i")
-        .replace('İ', "I")
-        .replace('ğ', "g")
-        .replace('Ğ', "G")
-        .replace('ş', "s")
-        .replace('Ş', "S")
-        .replace('ç', "c")
-        .replace('Ç', "C")
-        .replace('ö', "o")
-        .replace('Ö', "O")
-        .replace('ü', "u")
-        .replace('Ü', "U")
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '(' => result.push_str("\\("),
+            ')' => result.push_str("\\)"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            // Turkish characters - use Unicode escape
+            'ı' => result.push_str("\\u0131"),
+            'İ' => result.push_str("\\u0130"),
+            'ğ' => result.push_str("\\u011F"),
+            'Ğ' => result.push_str("\\u011E"),
+            'ş' => result.push_str("\\u015F"),
+            'Ş' => result.push_str("\\u015E"),
+            'ç' => result.push_str("\\u00E7"),
+            'Ç' => result.push_str("\\u00C7"),
+            'ö' => result.push_str("\\u00F6"),
+            'Ö' => result.push_str("\\u00D6"),
+            'ü' => result.push_str("\\u00FC"),
+            'Ü' => result.push_str("\\u00DC"),
+            // Regular ASCII
+            _ if c.is_ascii() => result.push(c),
+            // Other Unicode - use hex escape
+            _ => {
+                for b in c.to_string().as_bytes() {
+                    result.push_str(&format!("\\x{:02X}", b));
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Simple base64 encoding (no external dependency)
